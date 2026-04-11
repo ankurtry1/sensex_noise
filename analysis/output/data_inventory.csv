@@ -1,0 +1,4 @@
+source_file,records,date_start,date_end,dates,trade_entries,open_marks,trade_exits,early_failure_events,usable_for_trade_lifecycle,usable_for_spot_tick_replay,usable_for_option_tick_replay
+11Mar_trades.jsonl,4930,2026-03-11,2026-03-11,2026-03-11,58,4757,57,0,yes,no,partial_from_marks_only
+12Mar_trades.jsonl,5014,2026-03-12,2026-03-12,2026-03-12,30,4931,23,0,yes,no,partial_from_marks_only
+trades.jsonl,10630,2026-03-13,2026-03-19,"2026-03-13,2026-03-18,2026-03-19",114,7082,113,25,yes,no,partial_from_marks_only

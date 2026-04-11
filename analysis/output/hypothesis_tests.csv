@@ -1,0 +1,11 @@
+hypothesis_id,statement,test_definition,sample_size,metric_1,metric_2,support_level,notes
+H1,5-point trigger often yields +3 premium follow-through.,Target-hit rate across all closed trades.,193,0.9481865284974094,-1055.0000000000007,suggestive,High hit-rate can coexist with negative expectancy if loser tails are large.
+H2,Fast trigger moves perform better than slow trigger moves.,Entry delay from source candle start vs outcomes.,193,-0.21466396219552203,1612.1739130434783,suggestive,Negative Spearman correlation suggests slower setups underperform.
+H3,Premium confirmation soon after entry improves outcomes.,runup_10s >= 1.0 vs < 1.0.,193,5634.099200581396,0.9844961240310077,suggestive,Confirmation uses post-entry premium behavior as proxy.
+H4,Later-day trades underperform.,Compare before 13:00 vs >=13:00 PnL.,193,-1573.4926470588248,182.1052631578957,inconclusive,Post-1PM time-stop losses can materially impact late session expectancy.
+H5,"If premium does not move quickly, trade quality is poor.",runup_10s < 0.5 vs >= 0.5.,193,-6379.18,806.601398601398,suggestive,Useful kill-switch signal if this gap is stable over more days.
+H6,Spot fallback toward trigger invalidates continuation.,Spot post-entry path not logged; proxy with option drawdown_10s <= -2.,193,-4504.3867924528295,3147.7011494252865,proxy_only,Requires spot tick logging around trigger/entry to test directly.
+H7,Moneyness influences premium response quality.,Compare ITM/ATM/OTM groups at entry.,193,-1055.0000000000007,-1055.0000000000007,inconclusive,Interpret cautiously if one class dominates sample.
+H8,Regime/candle context affects outcomes.,Proxy regime by first-30s premium range (high vs low).,193,-5022.298969072165,2953.6249999999986,inconclusive,True candle/volatility context requires underlying tick/candle logs.
+H9,Immediate adverse move predicts weak expectancy.,drawdown_5s <= -2 vs better first-5s profile.,193,-2396.7888888888892,117.43689320388293,suggestive,Strong candidate for quick invalidation if stable over more sessions.
+H10,Continuation and reversal setups behave differently.,Compare known signal families.,49,-10064.384615384615,-3636.899999999995,suggestive,Only evaluated where signal_kind exists.

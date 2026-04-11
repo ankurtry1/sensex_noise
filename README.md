@@ -1,160 +1,151 @@
-# Sensex Noise Paper Trading Repo
+# Sensex Noise Paper/Live Trading Engine
 
-A Python repo for **paper trading** your Sensex options strategy using live market data from Kite Connect and a simulated wallet.
+Python engine for Sensex option signal execution with layered risk exits, websocket-first market data, structured event telemetry, and enriched ML-ready trade summaries.
 
-This repo does **not place real exchange orders**. It does three things:
+## What This Repo Does
 
-1. watches **BSE:SENSEX** live LTP,
-2. evaluates your 5-minute candle breakout rule,
-3. simulates a **market buy** plus an **immediate target limit sell at entry + 3**.
+- Streams `BSE:SENSEX` and related instruments via Kite WebSocket.
+- Builds 5-minute candle state and keeps the existing signal generation logic.
+- Enters one options position at a time (paper or live broker mode).
+- Applies layered exit policy (hard stop, early-risk, path-risk, target, time-stop, manual controls).
+- Emits detailed JSONL event stream + enriched per-trade summaries.
 
-It supports:
-- one trade at a time,
-- no concurrent positions,
-- no re-entry in the same candle after exit,
-- strike rounding to valid **100-point Sensex strikes**,
-- nearest weekly expiry selection,
-- paper wallet and P&L logging,
-- pluggable charges model.
+## Strategy Summary
 
-## Strategy locked into this repo
+### Signal generation (unchanged core rule)
 
-### Candle setup
-- timeframe: **5 minutes**
-- previous candle green: `close > open`
-- previous candle red: `close < open`
-- neutral candle: ignored
+- Previous green candle:
+  - continuation call trigger: `prev_close + ENTRY_BUFFER_POINTS`
+  - reversal put trigger: `prev_open - ENTRY_BUFFER_POINTS`
+- Previous red candle:
+  - continuation put trigger: `prev_close - ENTRY_BUFFER_POINTS`
+  - reversal call trigger: `prev_open + ENTRY_BUFFER_POINTS`
 
-### Entry
-- if previous candle is green and live **Sensex spot LTP** crosses `previous_close + 5`, buy **CALL**
-- if previous candle is red and live **Sensex spot LTP** crosses `previous_close - 5`, buy **PUT**
+### Layered exit policy
 
-### Option selection
-- nearest weekly expiry
-- call strike: `round_to_100(spot - 200)`
-- put strike: `round_to_100(spot + 200)`
+Exit precedence:
 
-### Execution
-- simulate **market buy** at current option LTP
-- immediately place simulated **limit sell** at `entry_price + 3`
-- exit when option LTP reaches or exceeds the target
+1. manual exit commands (`EXIT_NOW`)
+2. hard stop
+3. early-risk forced exit
+4. path-risk exit
+5. manual limit hit
+6. target hit
+7. time-stop after 1 PM
 
-### Position rules
-- quantity: **500**
-- starting wallet: **₹10,00,000**
-- one open trade max
-- after target exit, no re-entry in the same 5-minute candle
-- no EOD forced square-off logic included
-- charges model is pluggable and currently defaults to zero unless you wire yours in
+Policy details:
 
-## Repo structure
+- Layer 0 hard stop:
+  - arms only after `HARD_STOP_ARM_AFTER_SECONDS` from entry
+  - normal trades: `-HARD_STOP_POINTS`
+  - continuation call trades: `-CONTINUATION_CALL_HARD_STOP_POINTS`
+- Layer 1 early-risk:
+  - suspicion checkpoint at `EARLY_RISK_SUSPICION_SECONDS`
+  - forced exit checkpoint at `EARLY_RISK_EXIT_SECONDS` with configured runup/drawdown/below-entry criteria
+- Layer 2 path-risk:
+  - checkpoint at `PATH_RISK_CHECK_SECONDS`
+  - exit on configured pnl + runup criteria
+- Dynamic risky target:
+  - when trade becomes fragile, target can be reduced to `RISKY_TARGET_POINTS`
+  - stricter post-1PM risky target supported via `STRICT_AFTER_1PM_RISKY_TARGET_POINTS`
+  - live mode repricing prefers modify-order first, with safe cancel-replace fallback
 
-```
-sensex-noise-papertrade/
-├─ .env.example
-├─ README.md
-├─ requirements.txt
-├─ run.py
-├─ scripts/
-│  ├─ check_kite_auth.py
-│  └─ generate_access_token.py
-├─ data/
-│  └─ instruments.csv            # optional cached instrument dump
-├─ logs/
-├─ src/
-│  └─ sensex_noise/
-│     ├─ __init__.py
-│     ├─ config.py
-│     ├─ models.py
-│     ├─ wallet.py
-│     ├─ charges.py
-│     ├─ candle_state.py
-│     ├─ selector.py
-│     ├─ strategy.py
-│     ├─ broker/
-│     │  ├─ __init__.py
-│     │  ├─ base.py
-│     │  └─ kite_paper.py
-│     └─ services/
-│        ├─ __init__.py
-│        ├─ instruments.py
-│        ├─ market_data.py
-│        └─ engine.py
-└─ tests/
-   └─ test_selector.py
-```
+## Logging Outputs
+
+The engine now writes multiple logs in parallel:
+
+- `TRADE_LOG_PATH`:
+  - legacy-compatible JSONL event stream (kept for backward compatibility)
+- `EVENT_LOG_PATH`:
+  - preferred JSONL event stream for all detailed lifecycle/snapshot/risk events
+- `ENRICHED_TRADE_LOG_PATH`:
+  - one JSONL enriched summary record per closed trade (ML-friendly)
+- `FEATURES_OUTPUT_PATH`:
+  - default output path for offline feature export utility
+
+### Hybrid tick logging
+
+- Full-day raw tick logs are always written for:
+  - `logs/ticks/YYYY-MM-DD/sensex.jsonl`
+  - `logs/ticks/YYYY-MM-DD/futures.jsonl`
+- Option raw full-day tape is controlled by `ENABLE_FULL_OPTION_TAPE_LOGGING`:
+  - `false` (default): no full-day options tape
+  - `true`: writes `logs/ticks/YYYY-MM-DD/options.jsonl`
+- Trade-scoped option paths are always captured in:
+  - `logs/trade_ticks/YYYY-MM-DD/<trade_id>.jsonl`
+  - includes pre-entry (5s), in-trade, post-exit (15s)
+
+### Important emitted events
+
+Includes (non-exhaustive):
+
+- `SIGNAL_GENERATED`
+- `ENTRY_CONTEXT`
+- `ENTRY_ORDER_SENT`, `ENTRY_ORDER_ACKED`, `ENTRY_FILLED`
+- `TRADE_SNAPSHOT`
+- `EARLY_RISK_SUSPECTED`, `EARLY_RISK_EXIT`
+- `PATH_RISK_EXIT`
+- `HARD_STOP_EXIT`
+- `TARGET_PLACED`, `TARGET_REPRICED`, `TARGET_HIT`
+- `TARGET_REPRICE_ATTEMPT`, `TARGET_REPRICE_MODIFY_SUCCESS`, `TARGET_REPRICE_MODIFY_FAILED`
+- `TARGET_REPRICE_CANCEL_REPLACE_SUCCESS`, `TARGET_REPRICE_CANCEL_REPLACE_FAILED`
+- `MANUAL_EXIT`, `MANUAL_LIMIT_HIT`
+- `TIME_STOP_AFTER_1PM`
+- `EXIT_ORDER_SENT`, `EXIT_ORDER_ACKED`, `EXIT_FILLED`
+- `EXIT_DECISION_SELECTED`, `EXIT_EXECUTION_FAILED`
+- `POST_EXIT_OBSERVATION`, `POST_EXIT_OBSERVATION_ERROR`, `POST_EXIT_OBSERVATION_COMPLETED`
+- optional `POST_EXIT_COUNTERFACTUAL`
+- `TRADE_CLOSED_SUMMARY`
 
 ## Setup
 
-### 1) Create environment
-
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # macOS/Linux
-# .venv\Scripts\activate    # Windows
+source .venv/bin/activate
 python3 -m pip install -r requirements.txt
-```
-
-### 2) Copy env file
-
-```bash
 cp .env.example .env
 ```
 
-Fill in your Kite credentials.
+Fill Kite credentials in `.env`.
 
-## About Kite access tokens
+## Core Environment Variables
 
-Kite Connect’s official Python client uses `api_key`, then login flow with a `request_token`, and then generates an `access_token` for the session. The official docs also provide quote/LTP endpoints and instrument dump access for live data and symbol discovery. citeturn800223search0turn800223search3
+See `.env.example` for the full list. Key groups:
 
-This repo expects that you already know how to generate the access token for the current session and place it in `.env`.
-
-## Authentication Troubleshooting
-
-- `KITE_API_KEY`: identifies your Kite app.
-- `KITE_API_SECRET`: app secret used to exchange `request_token` for session/access token.
-- `KITE_REQUEST_TOKEN`: short-lived token from Kite redirect URL after login.
-- `KITE_ACCESS_TOKEN`: session token used for authenticated API calls like `profile()` and `ltp()`.
-
-Important:
-- `KITE_ACCESS_TOKEN` must be generated for the same app as `KITE_API_KEY`.
-- Access tokens can expire or become invalid and then market-data calls fail.
-- Instrument download succeeding does not guarantee `ltp()` auth is valid for current credentials.
-
-Run these checks/tools:
-
-```bash
-python3 scripts/check_kite_auth.py
-python3 scripts/generate_access_token.py
-```
-
-If auth fails, regenerate `KITE_ACCESS_TOKEN` and update `.env`.
-
-## Environment variables
-
-```env
-KITE_API_KEY=
-KITE_API_SECRET=
-KITE_ACCESS_TOKEN=
-KITE_REQUEST_TOKEN=
-
-POLL_INTERVAL_SECONDS=2
-STARTING_CAPITAL=1000000
-TRADE_QTY=500
-ORDER_PRODUCT=MIS
-TARGET_POINTS=3
-ENTRY_BUFFER_POINTS=5
-CALL_OFFSET_POINTS=-200
-PUT_OFFSET_POINTS=200
-UNDERLYING_SYMBOL=BSE:SENSEX
-INSTRUMENTS_CACHE_PATH=data/instruments.csv
-TRADE_LOG_PATH=logs/trades.jsonl
-LOG_LEVEL=INFO
-```
-
-`ORDER_PRODUCT` supports `MIS` or `NRML` and is used for entry and exit orders.
-
-`KITE_REQUEST_TOKEN` is not used by the engine directly, but is left here because humans keep forgetting where they put it during login ceremonies.
+- runtime:
+  - `TRADING_MODE=paper|live`
+  - `POLL_INTERVAL_SECONDS`, `TRADE_QTY`, `ORDER_PRODUCT`
+- baseline strategy:
+  - `TARGET_POINTS`, `ENTRY_BUFFER_POINTS`
+- layered risk:
+  - `ENABLE_HARD_STOP`, `HARD_STOP_ARM_AFTER_SECONDS`, `HARD_STOP_POINTS`, `CONTINUATION_CALL_HARD_STOP_POINTS`
+  - `ENABLE_EARLY_RISK`, `EARLY_RISK_*`
+  - `ENABLE_PATH_RISK`, `PATH_RISK_*`
+  - `ENABLE_DYNAMIC_RISKY_TARGET`, `RISKY_TARGET_POINTS`, `STRICT_AFTER_1PM_RISKY_TARGET_POINTS`
+- telemetry:
+  - `ENABLE_SIGNAL_LOGGING`, `ENABLE_ENTRY_CONTEXT_LOGGING`, `ENABLE_SNAPSHOT_LOGGING`
+  - `SNAPSHOT_SECONDS` (comma-separated; parsed and sorted)
+  - `ENABLE_POST_EXIT_OBSERVATION`, `POST_EXIT_OBSERVATION_SECONDS`, `POST_EXIT_OBSERVATION_INTERVAL_SECONDS`
+  - `ENABLE_EXIT_DECISION_LOGGING`, `ENABLE_SLIPPAGE_LOGGING`
+- target repricing execution controls:
+  - `ENABLE_TARGET_REPRICE_MODIFY`
+  - `ENABLE_TARGET_REPRICE_FALLBACK_CANCEL_REPLACE`
+  - `TARGET_REPRICE_DEBOUNCE_SECONDS`
+- websocket/runtime hardening:
+  - `ENABLE_FULL_OPTION_TAPE_LOGGING`
+  - `STREAM_WATCHDOG_MAX_IDLE_SECONDS`
+  - `WATCHDOG_HARD_RECONNECT_SECONDS`
+  - `STREAM_RECONNECT_COOLDOWN_SECONDS`
+  - `STREAM_CONNECT_TIMEOUT_SECONDS`
+  - `STREAM_FIRST_TICK_TIMEOUT_SECONDS`
+  - `HEARTBEAT_LOG_INTERVAL_SECONDS`
+  - `REBASE_PERSIST_TICKS`
+  - `REBASE_COOLDOWN_SECONDS`
+  - `REBASE_MIN_MOVE_POINTS`
+  - `CRITICAL_TICK_QUEUE_MAXSIZE`
+  - `BACKGROUND_TICK_QUEUE_MAXSIZE`
+  - `JOURNAL_QUEUE_MAXSIZE`
+  - `JOURNAL_FLUSH_INTERVAL_SECONDS`
 
 ## Run
 
@@ -162,36 +153,34 @@ LOG_LEVEL=INFO
 python3 run.py
 ```
 
-## What happens when it runs
+## Runtime Manual Control
 
-- downloads or reads the instrument dump,
-- identifies valid Sensex option symbols,
-- polls BSE:SENSEX LTP,
-- builds current 5-minute candle state,
-- on a valid trigger, selects nearest weekly option contract,
-- simulates a market buy,
-- immediately places a simulated target sell,
-- logs trade lifecycle to console,
-- appends JSON events to `TRADE_LOG_PATH` (`logs/trades.jsonl` by default).
+Control file path is `CONTROL_PATH` (default `runtime/control.json`).
 
-## Important practical notes
+Supported actions:
 
-1. This is **paper trading only**.
-2. Quote and LTP availability depend on your market data access and instrument availability on Kite. Official docs note that quote APIs return data only for keys that actually exist in the response, so code must guard against missing instruments. citeturn800223search0
-3. Since your target is tiny, real-world spread and slippage matter a lot.
-4. Charges are currently zero by default unless you implement your own broker charge logic in `charges.py`.
-5. No stop-loss logic is coded because you explicitly chose manual monitoring.
+- immediate market exit:
 
-## Where to modify charges
-
-Edit:
-
-```python
-src/sensex_noise/charges.py
+```json
+{"action": "EXIT_NOW"}
 ```
 
-Implement your exact broker model there.
+- replace manual limit exit:
 
-## Safety
+```json
+{"action": "EXIT_LIMIT", "price": 123.45}
+```
 
-This repo is intentionally locked to a paper broker implementation. If you later want a live execution version, build that separately. Mixing paper logic and live logic in one button is how people manufacture regret.
+## Build Flat Feature CSV From Enriched Trades
+
+Utility script:
+
+```bash
+python3 analysis/feature_builder.py --input logs/trades_enriched.jsonl --output logs/features_daily.csv
+```
+
+## Notes on Quote Depth
+
+- Paper mode uses Kite `ltp()` fallback and logs `bid/ask/spread` as `None`.
+- Live mode attempts `quote()` depth; when unavailable, it safely falls back to `ltp()` and still logs a consistent quote object with nullable depth fields.
+- Live target-order repricing relies on Kite order status visibility (`orders()` / `order_history`) to confirm modifiability and reconciliation before trusting modify success.

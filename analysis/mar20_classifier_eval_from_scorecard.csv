@@ -1,0 +1,7 @@
+policy,TP,FP,TN,FN,precision,recall,specificity,fpr,flagged,winners_flagged,losses_flagged,baseline_net,net_if_flagged_removed,delta_net_if_removed,tail_eliminated_if_removed,tail_total,target_hits_lost_if_removed
+pred_early_high,0,0,0,0,,,,,0,0,0,0.0,0.0,0.0,0,0,0
+pred_early_medhigh,0,0,0,0,,,,,0,0,0,0.0,0.0,0.0,0,0,0
+pred_path_high,0,0,0,0,,,,,0,0,0,0.0,0.0,0.0,0,0,0
+pred_path_medhigh,0,0,0,0,,,,,0,0,0,0.0,0.0,0.0,0,0,0
+pred_staged_strict,0,0,0,0,,,,,0,0,0,0.0,0.0,0.0,0,0,0
+pred_staged_balanced,0,0,0,0,,,,,0,0,0,0.0,0.0,0.0,0,0,0

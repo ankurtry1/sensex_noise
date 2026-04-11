@@ -1,0 +1,10 @@
+{
+  "session_date": "2026-04-02",
+  "report_path": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/session_report/2026-04-02/report.md",
+  "trade_count": 57,
+  "win_count": 38,
+  "loss_count": 19,
+  "net_pnl": -15700.000000000004,
+  "runtime_trustworthy": true,
+  "output_dir": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/session_report/2026-04-02"
+}

@@ -1,0 +1,66 @@
+digraph StrategyFlow {
+  graph [label="Sensex Noise Engine: Entry to Exit Filter Flow (Current Logic)", labelloc=t, fontsize=20, fontname="Helvetica", bgcolor="white", ranksep=0.6, nodesep=0.45, pad=0.2];
+  node [shape=box, style="rounded,filled", fillcolor="#F8FBFF", color="#1F4E79", fontname="Helvetica", fontsize=11];
+  edge [color="#333333", arrowsize=0.8, fontname="Helvetica", fontsize=10];
+
+  tick [label="Tick arrives (spot quote)"];
+  candle [label="Update 5-minute candle (CandleTracker)"];
+  openpos [shape=diamond, fillcolor="#FFF7E6", color="#8A6D3B", label="Open position?"];
+
+  signal [label="Evaluate signal from previous candle\nGREEN: call if live >= prev_close + 5\n       put reversal if live <= prev_open - 5\nRED:   put if live <= prev_close - 5\n       call reversal if live >= prev_open + 5"];
+  gate [shape=diamond, fillcolor="#FFF7E6", color="#8A6D3B", label="Entry gates pass?\n(after 09:15, before 15:10,\nwithin 40s, one attempt/candle)"];
+  pick [label="Pick option + size quantity\nCALL strike ~ spot-200\nPUT strike ~ spot+200"];
+  buy [label="Place BUY market\n(product = NRML)"];
+  target [label="Place target LIMIT SELL\n(entry + 3 points)"];
+
+  path [label="While open: update path features\nMFE/MAE, runup/drawdown, snapshots"];
+  suspect [shape=diamond, fillcolor="#FFF7E6", color="#8A6D3B", label="5s Early suspicion?\nif pnl <= -2.0\n(post-1PM stricter)"];
+  reprice [label="If fragile: dynamic target reprice\n+3 -> +2"];
+  candidates [label="Collect exit candidates:\nMANUAL, HARD_STOP, EARLY(10s), PATH(30s),\nMANUAL_LIMIT_HIT, TARGET_HIT, TIME_STOP_AFTER_1PM"];
+  prec [shape=diamond, fillcolor="#FFF7E6", color="#8A6D3B", label="Apply precedence:\nManual > HardStop > Early > Path >\nManualLimit > Target > TimeStop"];
+
+  x1 [shape=box, style="rounded,filled", fillcolor="#FFF0F0", color="#A94442", label="MANUAL_EXIT\n(Market)"];
+  x2 [shape=box, style="rounded,filled", fillcolor="#FFF0F0", color="#A94442", label="HARD_STOP_EXIT\n(Market)"];
+  x3 [shape=box, style="rounded,filled", fillcolor="#FFF0F0", color="#A94442", label="EARLY_RISK_EXIT\n(Market)"];
+  x4 [shape=box, style="rounded,filled", fillcolor="#FFF0F0", color="#A94442", label="PATH_RISK_EXIT\n(Market)"];
+  x5 [shape=box, style="rounded,filled", fillcolor="#FFF0F0", color="#A94442", label="MANUAL_LIMIT_HIT\n(Limit)"];
+  x6 [shape=box, style="rounded,filled", fillcolor="#FFF0F0", color="#A94442", label="TARGET_HIT\n(Limit)"];
+  x7 [shape=box, style="rounded,filled", fillcolor="#FFF0F0", color="#A94442", label="TIME_STOP_AFTER_1PM\n(Market @ 60s)"];
+
+  note [shape=note, fillcolor="#FCFCFC", color="#666666", fontsize=10,
+        label="Threshold notes:\nHard-stop: -8 points (Continuation Call: -6)\nEarly-risk @10s: runup<1.0 AND drawdown<=-3.0 AND below_entry\nPath-risk @30s: current_pnl<=-6.0 AND runup<2.0\n(stricter post-1PM and/or fragile)"];
+
+  tick -> candle -> openpos;
+
+  openpos -> signal [label="No"];
+  signal -> gate;
+  gate -> pick [label="Yes"];
+  pick -> buy -> target;
+  target -> tick [label="continue loop", color="#777777"];
+
+  openpos -> path [label="Yes"];
+  path -> suspect;
+  suspect -> reprice [label="Yes (fragile)"];
+  suspect -> candidates [label="No"];
+  reprice -> candidates;
+  candidates -> prec;
+
+  prec -> x1;
+  prec -> x2;
+  prec -> x3;
+  prec -> x4;
+  prec -> x5;
+  prec -> x6;
+  prec -> x7;
+
+  {rank=same; x1; x2; x3; x4; x5; x6; x7}
+  x1 -> tick [style=dashed, color="#888888", label="next trade loop"];
+  x2 -> tick [style=dashed, color="#888888"];
+  x3 -> tick [style=dashed, color="#888888"];
+  x4 -> tick [style=dashed, color="#888888"];
+  x5 -> tick [style=dashed, color="#888888"];
+  x6 -> tick [style=dashed, color="#888888"];
+  x7 -> tick [style=dashed, color="#888888"];
+
+  note -> prec [style=dotted, arrowhead=none, color="#999999"];
+}

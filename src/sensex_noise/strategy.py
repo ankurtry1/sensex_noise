@@ -12,6 +12,7 @@ class Signal:
     side: SignalSide
     trigger_price: float
     source_candle_start: datetime
+    signal_kind: str
 
 
 class StrategyEvaluator:
@@ -35,11 +36,39 @@ class StrategyEvaluator:
         if previous_candle.color == CandleColor.GREEN:
             trigger_price = previous_candle.close + self.entry_buffer_points
             if live_ltp >= trigger_price:
-                return Signal(side=SignalSide.CALL, trigger_price=trigger_price, source_candle_start=current_candle.start)
+                return Signal(
+                    side=SignalSide.CALL,
+                    trigger_price=trigger_price,
+                    source_candle_start=current_candle.start,
+                    signal_kind="CONTINUATION_CALL",
+                )
+
+            reversal_trigger_price = previous_candle.open - self.entry_buffer_points
+            if live_ltp <= reversal_trigger_price:
+                return Signal(
+                    side=SignalSide.PUT,
+                    trigger_price=reversal_trigger_price,
+                    source_candle_start=current_candle.start,
+                    signal_kind="REVERSAL_PUT",
+                )
 
         if previous_candle.color == CandleColor.RED:
             trigger_price = previous_candle.close - self.entry_buffer_points
             if live_ltp <= trigger_price:
-                return Signal(side=SignalSide.PUT, trigger_price=trigger_price, source_candle_start=current_candle.start)
+                return Signal(
+                    side=SignalSide.PUT,
+                    trigger_price=trigger_price,
+                    source_candle_start=current_candle.start,
+                    signal_kind="CONTINUATION_PUT",
+                )
+
+            reversal_trigger_price = previous_candle.open + self.entry_buffer_points
+            if live_ltp >= reversal_trigger_price:
+                return Signal(
+                    side=SignalSide.CALL,
+                    trigger_price=reversal_trigger_price,
+                    source_candle_start=current_candle.start,
+                    signal_kind="REVERSAL_CALL",
+                )
 
         return None
