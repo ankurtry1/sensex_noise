@@ -1,0 +1,6 @@
+bucket_type,bucket,stress_event_count,distinct_stress_types
+bucket_pre_post_1pm,PRE_1PM,0,
+bucket_pre_post_1pm,POST_1PM,0,
+bucket_3way,EARLY_SESSION,0,
+bucket_3way,MID_SESSION,0,
+bucket_3way,LATE_SESSION,0,

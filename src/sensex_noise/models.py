@@ -72,7 +72,22 @@ class Position:
 
     # policy state
     target_points: float = 0.0
+    base_target_points: float = 0.0
+    promoted_target_points: float = 0.0
     hard_stop_points_used: float = 0.0
+    burst_score: int = 0
+    burst_features: dict[str, Any] = field(default_factory=dict)
+    is_promoted_candidate: bool = False
+    is_promoted_active: bool = False
+    promoted_3s_passed: Optional[bool] = None
+    promoted_3s_reason: Optional[str] = None
+    velocity_0_1s: Optional[float] = None
+    velocity_2_3s: Optional[float] = None
+    velocity_decay_ratio_3s: Optional[float] = None
+    promotion_first_hit_trigger_time: Optional[datetime] = None
+    promotion_deadline_time: Optional[datetime] = None
+    promotion_persistence_exit_triggered: bool = False
+    promotion_persistence_passed: Optional[bool] = None
     fragile: bool = False
     early_risk_suspicion_logged: bool = False
     early_risk_exit_triggered: bool = False
@@ -104,6 +119,27 @@ class Position:
     exit_spread: Optional[float] = None
     current_price: Optional[float] = None
     current_spot: Optional[float] = None
+    edge_current_pnl_points: float = 0.0
+    edge_max_favorable_excursion_points: float = 0.0
+    edge_max_adverse_excursion_points: float = 0.0
+    edge_first_update_time: Optional[datetime] = None
+    edge_last_update_time: Optional[datetime] = None
+    edge_elapsed_seconds: float = 0.0
+    edge_has_checked_1s: bool = False
+    edge_has_checked_3s: bool = False
+    edge_stale_quote_flag: bool = False
+    edge_exit_candidate_reasons: list[str] = field(default_factory=list)
+    edge_last_spread: Optional[float] = None
+    edge_bid_price: Optional[float] = None
+    edge_ask_price: Optional[float] = None
+    edge_has_subsecond_timestamps: bool = False
+    edge_last_state_update_log_second: Optional[int] = None
+    edge_exit_decision_reason: Optional[str] = None
+    edge_exit_decision_elapsed_seconds: Optional[float] = None
+    edge_exit_decision_pnl_points: Optional[float] = None
+    edge_exit_decision_mfe_points: Optional[float] = None
+    edge_exit_decision_mae_points: Optional[float] = None
+    edge_legacy_logic_bypassed: bool = False
 
     # path metrics
     max_favorable_excursion: float = 0.0

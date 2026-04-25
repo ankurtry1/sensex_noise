@@ -339,7 +339,8 @@ def test_open_trade_token_retained_on_lattice_rebase() -> None:
     changed = stream.rebase_if_needed(spot_ltp=78220.0, keep_tokens={3})
 
     assert changed is True
-    assert stream._option_tokens == {3, 4, 5}
+    assert stream._desired_option_tokens == {3, 4, 5}
+    assert stream._applied_option_tokens == {3, 4, 5}
     assert {1, 2} == set(stream.ticker.unsubscribed[0])
     assert {4, 5} == set(stream.ticker.subscribed[0])
 

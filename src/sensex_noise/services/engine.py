@@ -17,6 +17,12 @@ from sensex_noise.models import Position
 from sensex_noise.selector import InstrumentSelector
 from sensex_noise.services.instruments import InstrumentService
 from sensex_noise.services.market_data import MarketDataService
+from sensex_noise.services.entry_window import EntryWindowBuffer
+from sensex_noise.services.microburst import (
+    compute_promoted_3s_diagnostics,
+    layer4_persistence_result,
+    promoted_trade_survives_3s,
+)
 from sensex_noise.services.runtime_control import parse_command, read_control, reset_control
 from sensex_noise.services.sizing import calculate_position_quantity
 from sensex_noise.services.trade_journal import TradeJournal
@@ -31,11 +37,17 @@ AUTH_FAILURE_MSG = (
 )
 EXIT_REASON_PRECEDENCE = (
     "MANUAL_EXIT",
+    "EDGE_HARD_STOP",
+    "STALE_QUOTE_FAILSAFE",
+    "EARLY_FAIL_1S",
+    "PROMOTED_FAIL_3S",
+    "EARLY_FAIL_3S",
+    "PROMOTION_PERSISTENCE_FAIL",
     "HARD_STOP_EXIT",
-    "EARLY_RISK_EXIT",
-    "PATH_RISK_EXIT",
     "MANUAL_LIMIT_HIT",
     "TARGET_HIT",
+    "EARLY_RISK_EXIT",
+    "PATH_RISK_EXIT",
     "TIME_STOP_AFTER_1PM",
 )
 
@@ -48,6 +60,7 @@ class StrategyEngine:
         self.candle_tracker = CandleTracker()
         self.evaluator = StrategyEvaluator(entry_buffer_points=settings.entry_buffer_points)
         self.entry_cutoff_time = dt_time.fromisoformat(settings.entry_cutoff_time)
+        self.session_square_off_time = dt_time.fromisoformat(settings.session_square_off_time)
         self.broker = create_broker(settings)
         self.market_data = MarketDataService(self.broker)
         kite_for_instruments = KiteConnect(api_key=settings.kite_api_key)
@@ -61,6 +74,9 @@ class StrategyEngine:
             path=settings.trade_log_path,
             event_path=settings.event_log_path,
             enriched_trade_path=settings.enriched_trade_log_path,
+        )
+        self.entry_window_buffer = EntryWindowBuffer(
+            max_seconds=float(getattr(settings, "entry_window_max_seconds", 10.0))
         )
 
         self.open_position: Position | None = None
@@ -677,6 +693,12 @@ class StrategyEngine:
                 position.snapshot_features[feature_flag] = True
                 resolved_thresholds[key] = value
 
+        self.update_edge_invalidation_state(
+            position=position,
+            mark_time=mark_time,
+            option_quote=option_quote,
+        )
+
         return resolved_thresholds
 
     def _window_slope(self, position: Position, now: datetime, window_seconds: int) -> float | None:
@@ -697,6 +719,553 @@ class StrategyEngine:
 
         dt = max((newest_time - baseline_time).total_seconds(), 1e-6)
         return (newest_price - baseline_price) / dt
+
+    def _edge_enabled(self) -> bool:
+        return bool(getattr(self.settings, "enable_edge_invalidation", False))
+
+    def _microburst_policy_enabled(self) -> bool:
+        return bool(getattr(self.settings, "enable_microburst_gate", False))
+
+    def _position_uses_fixed_microburst_target(self, position: Position) -> bool:
+        if not self._microburst_policy_enabled():
+            return False
+        return position.base_target_points > 0
+
+    def _edge_payload(
+        self,
+        position: Position,
+        mark_time: datetime,
+        option_ltp: float,
+        *,
+        subconditions_triggered: list[str] | None = None,
+        include_config_snapshot: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "trade_id": position.trade_id,
+            "symbol": position.option_symbol,
+            "side": position.side.value,
+            "entry_time": position.entry_time.isoformat(),
+            "event_time": mark_time.isoformat(),
+            "elapsed_seconds": position.edge_elapsed_seconds,
+            "entry_price": position.entry_price,
+            "last_price": option_ltp,
+            "current_pnl_points": position.edge_current_pnl_points,
+            "max_favorable_excursion_points": position.edge_max_favorable_excursion_points,
+            "max_adverse_excursion_points": position.edge_max_adverse_excursion_points,
+            "spread": position.edge_last_spread,
+            "bid_price": position.edge_bid_price,
+            "ask_price": position.edge_ask_price,
+            "stale_quote_flag": position.edge_stale_quote_flag,
+            "has_subsecond_timestamps": position.edge_has_subsecond_timestamps,
+            "subconditions_triggered": subconditions_triggered or [],
+            "burst_score": position.burst_score,
+            "is_promoted_candidate": position.is_promoted_candidate,
+            "is_promoted_active": position.is_promoted_active,
+        }
+        if include_config_snapshot:
+            payload["config_snapshot"] = {
+                "edge_enabled": bool(getattr(self.settings, "enable_edge_invalidation", False)),
+                "check_1s": float(getattr(self.settings, "edge_invalidation_1s_check_seconds", 1.0)),
+                "check_3s": float(getattr(self.settings, "edge_invalidation_3s_check_seconds", 3.0)),
+                "hard_stop": float(getattr(self.settings, "edge_invalidation_hard_stop_points", 6.0)),
+                "prefer_over_legacy": bool(
+                    getattr(self.settings, "prefer_edge_invalidation_over_legacy_early_risk", True)
+                ),
+            }
+        return payload
+
+    def _promoted_3s_enabled_for_position(self, position: Position) -> bool:
+        return self._microburst_policy_enabled() and bool(position.is_promoted_candidate)
+
+    def _build_promoted_3s_diagnostics(
+        self,
+        position: Position,
+        mark_time: datetime,
+        option_ltp: float,
+    ) -> Any:
+        return compute_promoted_3s_diagnostics(
+            position.price_history,
+            entry_time=position.entry_time,
+            entry_price=position.entry_price,
+            current_time=mark_time,
+            current_price=option_ltp,
+        )
+
+    def update_edge_invalidation_state(
+        self,
+        position: Position,
+        mark_time: datetime,
+        option_quote: dict[str, Any],
+    ) -> None:
+        if not self._edge_enabled():
+            return
+
+        option_ltp = float(option_quote["ltp"])
+        pnl_points = option_ltp - position.entry_price
+        previous_update = position.edge_last_update_time
+        previous_stale_flag = position.edge_stale_quote_flag
+
+        if position.edge_first_update_time is None:
+            position.edge_first_update_time = mark_time
+        position.edge_last_update_time = mark_time
+        position.edge_elapsed_seconds = max(0.0, (mark_time - position.entry_time).total_seconds())
+        position.edge_current_pnl_points = pnl_points
+        position.edge_max_favorable_excursion_points = max(
+            position.edge_max_favorable_excursion_points,
+            pnl_points,
+            position.max_favorable_excursion,
+        )
+        position.edge_max_adverse_excursion_points = min(
+            position.edge_max_adverse_excursion_points,
+            pnl_points,
+            position.max_adverse_excursion,
+        )
+
+        position.edge_last_spread = option_quote.get("spread")
+        position.edge_bid_price = option_quote.get("bid")
+        position.edge_ask_price = option_quote.get("ask")
+        if mark_time.microsecond > 0:
+            position.edge_has_subsecond_timestamps = True
+
+        stale_threshold = float(
+            getattr(self.settings, "edge_invalidation_stale_quote_max_seconds", 1.5)
+        )
+        is_stale = False
+        if previous_update is not None:
+            gap_seconds = max(0.0, (mark_time - previous_update).total_seconds())
+            is_stale = gap_seconds > stale_threshold
+            if is_stale and not previous_stale_flag:
+                self._append_event(
+                    "EDGE_INVALIDATION_STALE_QUOTE",
+                    {
+                        **self._edge_payload(position, mark_time, option_ltp),
+                        "reason": "GAP_DETECTED",
+                        "seconds_since_last_update": gap_seconds,
+                        "stale_threshold_seconds": stale_threshold,
+                    },
+                )
+        position.edge_stale_quote_flag = is_stale
+
+        second_bucket = int(position.edge_elapsed_seconds)
+        if (
+            position.edge_last_state_update_log_second is None
+            or second_bucket != position.edge_last_state_update_log_second
+        ):
+            position.edge_last_state_update_log_second = second_bucket
+            self._append_event(
+                "EDGE_INVALIDATION_STATE_UPDATE",
+                self._edge_payload(position, mark_time, option_ltp),
+            )
+
+    def should_trigger_edge_hard_stop(
+        self,
+        position: Position,
+        mark_time: datetime,
+        option_ltp: float,
+        *,
+        record: bool = False,
+    ) -> bool:
+        if not self._edge_enabled():
+            return False
+        if not bool(getattr(self.settings, "edge_invalidation_hard_stop_enabled", True)):
+            return False
+
+        hard_stop_points = float(
+            getattr(self.settings, "edge_invalidation_hard_stop_points", 6.0)
+        )
+        current_pnl_points = option_ltp - position.entry_price
+        triggered = current_pnl_points <= -hard_stop_points
+        if triggered and record:
+            self._append_event(
+                "EDGE_INVALIDATION_HARD_STOP",
+                {
+                    **self._edge_payload(
+                        position,
+                        mark_time,
+                        option_ltp,
+                        subconditions_triggered=["HARD_STOP_BREACH"],
+                    ),
+                    "hard_stop_points": hard_stop_points,
+                },
+            )
+        return triggered
+
+    def evaluate_edge_invalidation_checkpoint_1s(
+        self,
+        position: Position,
+        mark_time: datetime,
+        option_ltp: float,
+        *,
+        record: bool = False,
+    ) -> bool:
+        if not self._edge_enabled():
+            return False
+        if not bool(getattr(self.settings, "edge_invalidation_1s_enabled", True)):
+            return False
+        if position.edge_has_checked_1s:
+            return False
+
+        check_seconds = float(getattr(self.settings, "edge_invalidation_1s_check_seconds", 1.0))
+        if position.edge_elapsed_seconds < check_seconds:
+            return False
+
+        position.edge_has_checked_1s = True
+        if bool(
+            getattr(self.settings, "edge_invalidation_require_subsecond_precision", False)
+        ) and not position.edge_has_subsecond_timestamps:
+            if record:
+                self._append_event(
+                    "EDGE_INVALIDATION_CHECK_1S_PASS",
+                    {
+                        **self._edge_payload(position, mark_time, option_ltp),
+                        "checkpoint_seconds": check_seconds,
+                        "skipped_due_to_subsecond_requirement": True,
+                    },
+                )
+            return False
+
+        min_runup = float(
+            getattr(self.settings, "edge_invalidation_1s_min_runup_points", 1.0)
+        )
+        max_pnl = float(getattr(self.settings, "edge_invalidation_1s_max_pnl_points", 0.0))
+        fail = (
+            position.edge_max_favorable_excursion_points < min_runup
+            and position.edge_current_pnl_points <= max_pnl
+        )
+        subconditions = []
+        if position.edge_max_favorable_excursion_points < min_runup:
+            subconditions.append("RUNUP_BELOW_MIN")
+        if position.edge_current_pnl_points <= max_pnl:
+            subconditions.append("PNL_NON_POSITIVE")
+
+        if record:
+            self._append_event(
+                "EDGE_INVALIDATION_CHECK_1S_FAIL" if fail else "EDGE_INVALIDATION_CHECK_1S_PASS",
+                {
+                    **self._edge_payload(
+                        position,
+                        mark_time,
+                        option_ltp,
+                        subconditions_triggered=subconditions,
+                    ),
+                    "checkpoint_seconds": check_seconds,
+                    "required_min_runup_points": min_runup,
+                    "required_max_pnl_points": max_pnl,
+                },
+            )
+        return fail
+
+    def _evaluate_promoted_3s_checkpoint(
+        self,
+        position: Position,
+        mark_time: datetime,
+        option_ltp: float,
+        *,
+        record: bool = False,
+    ) -> bool:
+        if not self._edge_enabled():
+            return False
+        if position.edge_has_checked_3s:
+            return False
+
+        check_seconds = float(getattr(self.settings, "edge_invalidation_3s_check_seconds", 3.0))
+        if position.edge_elapsed_seconds < check_seconds:
+            return False
+
+        position.edge_has_checked_3s = True
+        if bool(
+            getattr(self.settings, "edge_invalidation_require_subsecond_precision", False)
+        ) and not position.edge_has_subsecond_timestamps:
+            position.promoted_3s_passed = True
+            position.promoted_3s_reason = "SKIPPED_SUBSECOND_REQUIREMENT"
+            position.is_promoted_active = True
+            if record:
+                self._append_event(
+                    "PROMOTED_3S_PASS",
+                    {
+                        **self._edge_payload(position, mark_time, option_ltp),
+                        "checkpoint_seconds": check_seconds,
+                        "reason": position.promoted_3s_reason,
+                        "skipped_due_to_subsecond_requirement": True,
+                    },
+                )
+            return False
+
+        diag = self._build_promoted_3s_diagnostics(position, mark_time, option_ltp)
+        position.velocity_0_1s = diag.velocity_0_1s
+        position.velocity_2_3s = diag.velocity_2_3s
+        position.velocity_decay_ratio_3s = diag.velocity_decay_ratio
+
+        survived, reason = promoted_trade_survives_3s(diag, self.settings)
+        position.promoted_3s_passed = survived
+        position.promoted_3s_reason = reason
+        position.is_promoted_active = survived
+
+        if record:
+            self._append_event(
+                "PROMOTED_3S_PASS" if survived else "PROMOTED_3S_FAIL",
+                {
+                    **self._edge_payload(position, mark_time, option_ltp),
+                    "checkpoint_seconds": check_seconds,
+                    "reason": reason,
+                    "velocity_0_1s": diag.velocity_0_1s,
+                    "velocity_2_3s": diag.velocity_2_3s,
+                    "velocity_decay_ratio": diag.velocity_decay_ratio,
+                    "runup_3s": diag.runup_3s,
+                    "pnl_3s": diag.pnl_3s,
+                    "mae_3s": diag.mae_3s,
+                    "min_runup_points": float(
+                        getattr(self.settings, "promoted_3s_min_runup_points", 4.0)
+                    ),
+                    "min_pnl_points": float(
+                        getattr(self.settings, "promoted_3s_min_pnl_points", 1.5)
+                    ),
+                    "max_mae_points": float(
+                        getattr(self.settings, "promoted_3s_max_mae_points", 3.5)
+                    ),
+                    "min_velocity_decay_ratio": float(
+                        getattr(self.settings, "promoted_3s_min_velocity_decay_ratio", 0.5)
+                    ),
+                },
+            )
+
+        return not survived
+
+    def evaluate_edge_invalidation_checkpoint_3s(
+        self,
+        position: Position,
+        mark_time: datetime,
+        option_ltp: float,
+        *,
+        record: bool = False,
+    ) -> bool:
+        if not self._edge_enabled():
+            return False
+        if not bool(getattr(self.settings, "edge_invalidation_3s_enabled", True)):
+            return False
+        if self._promoted_3s_enabled_for_position(position):
+            return self._evaluate_promoted_3s_checkpoint(
+                position,
+                mark_time,
+                option_ltp,
+                record=record,
+            )
+        if position.edge_has_checked_3s:
+            return False
+
+        check_seconds = float(getattr(self.settings, "edge_invalidation_3s_check_seconds", 3.0))
+        if position.edge_elapsed_seconds < check_seconds:
+            return False
+
+        position.edge_has_checked_3s = True
+        if bool(
+            getattr(self.settings, "edge_invalidation_require_subsecond_precision", False)
+        ) and not position.edge_has_subsecond_timestamps:
+            if record:
+                self._append_event(
+                    "EDGE_INVALIDATION_CHECK_3S_PASS",
+                    {
+                        **self._edge_payload(position, mark_time, option_ltp),
+                        "checkpoint_seconds": check_seconds,
+                        "skipped_due_to_subsecond_requirement": True,
+                    },
+                )
+            return False
+
+        min_runup = float(
+            getattr(self.settings, "edge_invalidation_3s_min_runup_points", 2.0)
+        )
+        max_drawdown = float(
+            getattr(self.settings, "edge_invalidation_3s_max_drawdown_points", 4.0)
+        )
+        pinned_abs = float(
+            getattr(self.settings, "edge_invalidation_3s_pinned_pnl_abs_points", 1.0)
+        )
+
+        condition_low_runup = position.edge_max_favorable_excursion_points < min_runup
+        condition_drawdown = (
+            abs(position.edge_max_adverse_excursion_points) >= max_drawdown
+        )
+        condition_pinned = abs(position.edge_current_pnl_points) <= pinned_abs
+        fail = condition_low_runup or condition_drawdown or condition_pinned
+
+        subconditions = []
+        if condition_low_runup:
+            subconditions.append("RUNUP_BELOW_MIN")
+        if condition_drawdown:
+            subconditions.append("DRAWDOWN_EXCEEDED")
+        if condition_pinned:
+            subconditions.append("PINNED_NEAR_ENTRY")
+
+        if record:
+            self._append_event(
+                "EDGE_INVALIDATION_CHECK_3S_FAIL" if fail else "EDGE_INVALIDATION_CHECK_3S_PASS",
+                {
+                    **self._edge_payload(
+                        position,
+                        mark_time,
+                        option_ltp,
+                        subconditions_triggered=subconditions,
+                    ),
+                    "checkpoint_seconds": check_seconds,
+                    "required_min_runup_points": min_runup,
+                    "max_drawdown_points": max_drawdown,
+                    "pinned_pnl_abs_points": pinned_abs,
+                },
+            )
+        return fail
+
+    def _evaluate_promotion_persistence(
+        self,
+        position: Position,
+        mark_time: datetime,
+        option_ltp: float,
+        *,
+        record: bool = False,
+    ) -> bool:
+        if not bool(getattr(self.settings, "layer4_enabled", False)):
+            return False
+        if not position.is_promoted_candidate or not position.is_promoted_active:
+            return False
+        if position.promoted_3s_passed is not True:
+            return False
+        if position.promotion_persistence_exit_triggered:
+            return False
+
+        current_pnl = option_ltp - position.entry_price
+        trigger_points = float(getattr(self.settings, "layer4_trigger_points", 3.0))
+        window_seconds = float(getattr(self.settings, "layer4_window_seconds", 2.0))
+
+        if position.promotion_first_hit_trigger_time is None and current_pnl >= trigger_points:
+            position.promotion_first_hit_trigger_time = mark_time
+            position.promotion_deadline_time = mark_time + timedelta(seconds=window_seconds)
+            if record:
+                self._append_event(
+                    "PROMOTION_ARMED_AT_3PTS",
+                    {
+                        "trade_id": position.trade_id,
+                        "symbol": position.option_symbol,
+                        "armed_time": mark_time.isoformat(),
+                        "deadline_time": position.promotion_deadline_time.isoformat(),
+                        "trigger_points": trigger_points,
+                        "current_pnl_points": current_pnl,
+                    },
+                )
+
+        state, reason = layer4_persistence_result(
+            now=mark_time,
+            first_hit_time=position.promotion_first_hit_trigger_time,
+            deadline_time=position.promotion_deadline_time,
+            current_pnl=current_pnl,
+            settings=self.settings,
+            persistence_passed=bool(position.promotion_persistence_passed),
+        )
+        if state == "pass":
+            if position.promotion_persistence_passed is not True:
+                position.promotion_persistence_passed = True
+                if record:
+                    self._append_event(
+                        "PROMOTION_PERSISTENCE_PASS",
+                        {
+                            "trade_id": position.trade_id,
+                            "symbol": position.option_symbol,
+                            "current_pnl_points": current_pnl,
+                            "deadline_time": (
+                                position.promotion_deadline_time.isoformat()
+                                if position.promotion_deadline_time is not None
+                                else None
+                            ),
+                            "reason": reason,
+                        },
+                    )
+            return False
+        if state == "fail":
+            position.promotion_persistence_passed = False
+            position.promotion_persistence_exit_triggered = True
+            if record:
+                self._append_event(
+                    "PROMOTION_PERSISTENCE_FAIL",
+                    {
+                        "trade_id": position.trade_id,
+                        "symbol": position.option_symbol,
+                        "current_pnl_points": current_pnl,
+                        "deadline_time": (
+                            position.promotion_deadline_time.isoformat()
+                            if position.promotion_deadline_time is not None
+                            else None
+                        ),
+                        "reason": reason,
+                    },
+                )
+            return True
+        return False
+
+    def _should_trigger_stale_quote_failsafe(
+        self,
+        position: Position,
+        mark_time: datetime,
+        option_ltp: float,
+        *,
+        record: bool = False,
+    ) -> bool:
+        if not self._edge_enabled():
+            return False
+        if not bool(getattr(self.settings, "edge_invalidation_kill_on_stale_quotes", False)):
+            return False
+        if not position.edge_stale_quote_flag:
+            return False
+        if record:
+            self._append_event(
+                "EDGE_INVALIDATION_STALE_QUOTE",
+                {
+                    **self._edge_payload(
+                        position,
+                        mark_time,
+                        option_ltp,
+                        subconditions_triggered=["STALE_QUOTE_FAILSAFE"],
+                    ),
+                    "kill_on_stale_quotes": True,
+                },
+            )
+        return True
+
+    def _collect_edge_invalidation_candidates(
+        self,
+        position: Position,
+        option_quote: dict[str, Any],
+        mark_time: datetime,
+    ) -> list[str]:
+        if not self._edge_enabled():
+            return []
+
+        option_ltp = float(option_quote["ltp"])
+        candidates: list[str] = []
+        position.edge_exit_candidate_reasons = []
+
+        if self.should_trigger_edge_hard_stop(position, mark_time, option_ltp, record=True):
+            candidates.append("EDGE_HARD_STOP")
+        if self._should_trigger_stale_quote_failsafe(position, mark_time, option_ltp, record=True):
+            candidates.append("STALE_QUOTE_FAILSAFE")
+        if self.evaluate_edge_invalidation_checkpoint_1s(position, mark_time, option_ltp, record=True):
+            candidates.append("EARLY_FAIL_1S")
+        if self.evaluate_edge_invalidation_checkpoint_3s(position, mark_time, option_ltp, record=True):
+            candidates.append(
+                "PROMOTED_FAIL_3S" if self._promoted_3s_enabled_for_position(position) else "EARLY_FAIL_3S"
+            )
+
+        if candidates:
+            position.edge_exit_candidate_reasons = list(candidates)
+            self._append_event(
+                "EDGE_INVALIDATION_EXIT_REQUESTED",
+                self._edge_payload(
+                    position,
+                    mark_time,
+                    option_ltp,
+                    subconditions_triggered=list(candidates),
+                    include_config_snapshot=True,
+                ),
+            )
+        return candidates
 
     def _emit_due_snapshots(
         self,
@@ -942,18 +1511,45 @@ class StrategyEngine:
         candidates: list[str] = []
         if self.manual_exit_requested:
             candidates.append("MANUAL_EXIT")
+
+        edge_candidates = self._collect_edge_invalidation_candidates(
+            position=position,
+            option_quote=option_quote,
+            mark_time=mark_time,
+        )
+        candidates.extend(edge_candidates)
+
         if self._should_hard_stop(position, mark_time=mark_time, option_ltp=option_ltp):
             candidates.append("HARD_STOP_EXIT")
-        if self._should_early_exit(position, mark_time=mark_time, option_ltp=option_ltp):
-            candidates.append("EARLY_RISK_EXIT")
-        if self._should_path_exit(position, mark_time=mark_time, option_ltp=option_ltp):
-            candidates.append("PATH_RISK_EXIT")
+
+        prefer_edge = bool(
+            getattr(self.settings, "prefer_edge_invalidation_over_legacy_early_risk", True)
+        ) and self._edge_enabled()
+        position.edge_legacy_logic_bypassed = prefer_edge
+        if not prefer_edge:
+            if self._should_early_exit(position, mark_time=mark_time, option_ltp=option_ltp):
+                candidates.append("EARLY_RISK_EXIT")
+            if self._should_path_exit(position, mark_time=mark_time, option_ltp=option_ltp):
+                candidates.append("PATH_RISK_EXIT")
+        if self._evaluate_promotion_persistence(
+            position=position,
+            mark_time=mark_time,
+            option_ltp=option_ltp,
+            record=True,
+        ):
+            candidates.append("PROMOTION_PERSISTENCE_FAIL")
         if self.active_exit_order_type == "MANUAL_LIMIT" and self.active_exit_price is not None:
             if option_ltp >= self.active_exit_price:
                 candidates.append("MANUAL_LIMIT_HIT")
         if option_ltp >= position.target_price:
             candidates.append("TARGET_HIT")
         holding_seconds = (mark_time - position.entry_time).total_seconds()
+        if (
+            bool(getattr(self.settings, "session_square_off_enabled", False))
+            and mark_time.time() >= self.session_square_off_time
+        ):
+            candidates.append("TIME_STOP_AFTER_1PM")
+            return candidates
         if (
             position.entry_time.time() >= dt_time(hour=13, minute=0)
             and holding_seconds >= self.settings.post_1pm_time_stop_seconds
@@ -982,6 +1578,14 @@ class StrategyEngine:
         position.exit_decision_time = decision_time
         position.exit_trigger_reference_price = trigger_reference_price
         position.exit_trigger_reason_candidates = list(candidates)
+        position.edge_exit_decision_reason = selected_reason
+        position.edge_exit_decision_elapsed_seconds = max(
+            0.0,
+            (decision_time - position.entry_time).total_seconds(),
+        )
+        position.edge_exit_decision_pnl_points = position.edge_current_pnl_points
+        position.edge_exit_decision_mfe_points = position.edge_max_favorable_excursion_points
+        position.edge_exit_decision_mae_points = position.edge_max_adverse_excursion_points
 
     def _log_exit_decision_selected(
         self,
@@ -1004,8 +1608,17 @@ class StrategyEngine:
                 "option_ltp": option_ltp,
                 "spot_ltp": spot_ltp,
                 "fragile": position.fragile,
+                "burst_score": position.burst_score,
+                "is_promoted_candidate": position.is_promoted_candidate,
+                "is_promoted_active": position.is_promoted_active,
                 "holding_seconds": holding_seconds,
                 "closing": position.closing,
+                "edge_elapsed_seconds": position.edge_elapsed_seconds,
+                "edge_current_pnl_points": position.edge_current_pnl_points,
+                "edge_max_favorable_excursion_points": position.edge_max_favorable_excursion_points,
+                "edge_max_adverse_excursion_points": position.edge_max_adverse_excursion_points,
+                "edge_exit_candidate_reasons": position.edge_exit_candidate_reasons,
+                "edge_legacy_logic_bypassed": position.edge_legacy_logic_bypassed,
             },
         )
 
@@ -1051,6 +1664,8 @@ class StrategyEngine:
 
     def _maybe_reprice_target_for_fragile(self, position: Position) -> None:
         if not self.settings.enable_dynamic_risky_target:
+            return
+        if self._position_uses_fixed_microburst_target(position):
             return
         if position.closing or not position.fragile:
             return
@@ -1435,7 +2050,22 @@ class StrategyEngine:
                 "exit_reason": exit_reason,
                 "order_id": position.exit_order_id,
                 "variety": "regular",
-                "order_type": "MARKET" if exit_reason in {"MANUAL_EXIT", "HARD_STOP_EXIT", "EARLY_RISK_EXIT", "PATH_RISK_EXIT", "TIME_STOP_AFTER_1PM"} else "LIMIT",
+                "order_type": "MARKET"
+                if exit_reason
+                in {
+                    "MANUAL_EXIT",
+                    "EDGE_HARD_STOP",
+                    "STALE_QUOTE_FAILSAFE",
+                    "EARLY_FAIL_1S",
+                    "EARLY_FAIL_3S",
+                    "PROMOTED_FAIL_3S",
+                    "PROMOTION_PERSISTENCE_FAIL",
+                    "HARD_STOP_EXIT",
+                    "EARLY_RISK_EXIT",
+                    "PATH_RISK_EXIT",
+                    "TIME_STOP_AFTER_1PM",
+                }
+                else "LIMIT",
                 "transaction_type": "SELL",
                 "requested_price": position.exit_trigger_reference_price,
                 "fill_price": position.exit_price,

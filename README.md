@@ -6,8 +6,9 @@ Python engine for Sensex option signal execution with layered risk exits, websoc
 
 - Streams `BSE:SENSEX` and related instruments via Kite WebSocket.
 - Builds 5-minute candle state and keeps the existing signal generation logic.
+- Uses the candle signal as directional context, then applies a pre-entry microburst gate.
 - Enters one options position at a time (paper or live broker mode).
-- Applies layered exit policy (hard stop, early-risk, path-risk, target, time-stop, manual controls).
+- Applies layered exit policy (edge invalidation + hard stop + target + legacy risk layers + manual controls).
 - Emits detailed JSONL event stream + enriched per-trade summaries.
 
 ## Strategy Summary
@@ -23,18 +24,41 @@ Python engine for Sensex option signal execution with layered risk exits, websoc
 
 ### Layered exit policy
 
+Entry gate:
+
+- Candle logic still decides direction/context only.
+- A pre-entry microburst score is computed from the recent underlying + option tape.
+- Entries require `MICROBURST_MIN_SCORE` or higher.
+- score `3/4`: normal target (`NORMAL_TARGET_POINTS`, default `3`)
+- score `>=5`: promoted target (`PROMOTED_TARGET_POINTS`, default `7`)
+
 Exit precedence:
 
 1. manual exit commands (`EXIT_NOW`)
-2. hard stop
-3. early-risk forced exit
-4. path-risk exit
+2. catastrophic edge safety exits (`EDGE_HARD_STOP`, `STALE_QUOTE_FAILSAFE`)
+3. edge invalidation / promoted-policy exits (`EARLY_FAIL_1S`, `EARLY_FAIL_3S`, `PROMOTED_FAIL_3S`, `PROMOTION_PERSISTENCE_FAIL`)
+4. hard stop
 5. manual limit hit
 6. target hit
-7. time-stop after 1 PM
+7. legacy early/path risk exits
+8. time-stop after 1 PM
 
 Policy details:
 
+- Edge invalidation (fast edge kill):
+  - 1-second soft invalidation: weak runup + non-positive pnl can force exit
+  - normal trades keep the existing 3-second invalidation rule
+  - promoted trades use stricter 3-second diagnostics:
+    - `runup_3s >= 4.0`
+    - `pnl_3s > 1.5`
+    - `mae_3s > -3.5`
+    - `velocity_2_3s >= 0.5 * velocity_0_1s`
+  - promoted trades that pass 3s enter Layer 4 persistence:
+    - first `+3.0` touch arms a 2-second window
+    - they must reach `+4.5` inside that window or exit immediately
+  - fail-safe hard stop (`EDGE_INVALIDATION_HARD_STOP_POINTS`) is evaluated continuously
+  - optional stale quote fail-safe if `EDGE_INVALIDATION_KILL_ON_STALE_QUOTES=true`
+  - legacy early/path-risk can be bypassed via `PREFER_EDGE_INVALIDATION_OVER_LEGACY_EARLY_RISK=true`
 - Layer 0 hard stop:
   - arms only after `HARD_STOP_ARM_AFTER_SECONDS` from entry
   - normal trades: `-HARD_STOP_POINTS`
@@ -81,8 +105,18 @@ Includes (non-exhaustive):
 
 - `SIGNAL_GENERATED`
 - `ENTRY_CONTEXT`
+- `MICROBURST_FEATURES_COMPUTED`
+- `ENTRY_BLOCKED_MICROBURST_GATE`, `ENTRY_ALLOWED_MICROBURST_GATE`
 - `ENTRY_ORDER_SENT`, `ENTRY_ORDER_ACKED`, `ENTRY_FILLED`
 - `TRADE_SNAPSHOT`
+- `EDGE_INVALIDATION_STATE_UPDATE`
+- `EDGE_INVALIDATION_CHECK_1S_PASS`, `EDGE_INVALIDATION_CHECK_1S_FAIL`
+- `EDGE_INVALIDATION_CHECK_3S_PASS`, `EDGE_INVALIDATION_CHECK_3S_FAIL`
+- `PROMOTED_3S_PASS`, `PROMOTED_3S_FAIL`
+- `PROMOTION_ARMED_AT_3PTS`, `PROMOTION_PERSISTENCE_PASS`, `PROMOTION_PERSISTENCE_FAIL`
+- `EDGE_INVALIDATION_HARD_STOP`
+- `EDGE_INVALIDATION_STALE_QUOTE`
+- `EDGE_INVALIDATION_EXIT_REQUESTED`
 - `EARLY_RISK_SUSPECTED`, `EARLY_RISK_EXIT`
 - `PATH_RISK_EXIT`
 - `HARD_STOP_EXIT`
@@ -117,7 +151,16 @@ See `.env.example` for the full list. Key groups:
   - `POLL_INTERVAL_SECONDS`, `TRADE_QTY`, `ORDER_PRODUCT`
 - baseline strategy:
   - `TARGET_POINTS`, `ENTRY_BUFFER_POINTS`
+  - `SESSION_SQUARE_OFF_ENABLED`, `SESSION_SQUARE_OFF_TIME` (absolute close, e.g. `15:15`)
 - layered risk:
+  - `ENABLE_MICROBURST_GATE`, `MICROBURST_*`
+  - `NORMAL_TARGET_POINTS`, `PROMOTED_*`
+  - `LAYER4_*`
+  - `ENABLE_EDGE_INVALIDATION`
+  - `EDGE_INVALIDATION_1S_*`, `EDGE_INVALIDATION_3S_*`
+  - `EDGE_INVALIDATION_HARD_STOP_*`
+  - `EDGE_INVALIDATION_STALE_QUOTE_*`
+  - `PREFER_EDGE_INVALIDATION_OVER_LEGACY_EARLY_RISK`
   - `ENABLE_HARD_STOP`, `HARD_STOP_ARM_AFTER_SECONDS`, `HARD_STOP_POINTS`, `CONTINUATION_CALL_HARD_STOP_POINTS`
   - `ENABLE_EARLY_RISK`, `EARLY_RISK_*`
   - `ENABLE_PATH_RISK`, `PATH_RISK_*`

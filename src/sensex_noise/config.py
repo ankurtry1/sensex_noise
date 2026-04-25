@@ -35,7 +35,11 @@ class Settings:
     control_path: Path
     entry_cutoff_time: str
     entry_window_seconds: int
+    entry_window_max_seconds: float
+    entry_feature_lookback_seconds: float
     post_1pm_time_stop_seconds: int
+    session_square_off_enabled: bool
+    session_square_off_time: str
     early_failure_window_seconds: int
     early_failure_mfe_min: float
     early_failure_mae_max: float
@@ -51,6 +55,25 @@ class Settings:
     hard_stop_arm_after_seconds: int
     hard_stop_points: float
     continuation_call_hard_stop_points: float
+    enable_microburst_gate: bool
+    microburst_min_score: int
+    microburst_ind_accel_threshold_1: float
+    microburst_ind_accel_threshold_2: float
+    microburst_opt_velocity_threshold: float
+    microburst_opt_depth_imb_threshold: float
+    microburst_ind_velocity_min: float
+    microburst_ind_velocity_max: float
+    normal_target_points: float
+    promoted_min_score: int
+    promoted_target_points: float
+    promoted_3s_min_runup_points: float
+    promoted_3s_min_pnl_points: float
+    promoted_3s_max_mae_points: float
+    promoted_3s_min_velocity_decay_ratio: float
+    layer4_enabled: bool
+    layer4_trigger_points: float
+    layer4_required_followthrough_points: float
+    layer4_window_seconds: float
     enable_early_risk: bool
     early_risk_suspicion_seconds: int
     early_risk_exit_seconds: int
@@ -66,6 +89,24 @@ class Settings:
     path_risk_runup_max_for_exit: float
     path_risk_strict_after_1pm: bool
     path_risk_tighten_if_fragile: bool
+    enable_edge_invalidation: bool
+    edge_invalidation_1s_enabled: bool
+    edge_invalidation_3s_enabled: bool
+    edge_invalidation_1s_check_seconds: float
+    edge_invalidation_3s_check_seconds: float
+    edge_invalidation_1s_min_runup_points: float
+    edge_invalidation_1s_max_pnl_points: float
+    edge_invalidation_3s_min_runup_points: float
+    edge_invalidation_3s_max_drawdown_points: float
+    edge_invalidation_3s_pinned_pnl_abs_points: float
+    edge_invalidation_hard_stop_points: float
+    edge_invalidation_hard_stop_enabled: bool
+    edge_invalidation_stale_quote_max_seconds: float
+    edge_invalidation_kill_on_stale_quotes: bool
+    edge_invalidation_require_subsecond_precision: bool
+    edge_invalidation_use_underlying_confirmation: bool
+    edge_invalidation_use_spread_filter: bool
+    prefer_edge_invalidation_over_legacy_early_risk: bool
     enable_dynamic_risky_target: bool
     risky_target_points: float
     strict_after_1pm_risky_target_points: float
@@ -145,8 +186,24 @@ def _validate(settings: Settings) -> None:
         raise ValueError("TARGET_POINTS must be > 0")
     if settings.entry_window_seconds <= 0:
         raise ValueError("ENTRY_WINDOW_SECONDS must be > 0")
+    if settings.entry_window_max_seconds <= 0:
+        raise ValueError("ENTRY_WINDOW_MAX_SECONDS must be > 0")
+    if settings.entry_feature_lookback_seconds <= 0:
+        raise ValueError("ENTRY_FEATURE_LOOKBACK_SECONDS must be > 0")
+    if settings.entry_feature_lookback_seconds > settings.entry_window_max_seconds:
+        raise ValueError("ENTRY_FEATURE_LOOKBACK_SECONDS must be <= ENTRY_WINDOW_MAX_SECONDS")
     if settings.post_1pm_time_stop_seconds <= 0:
         raise ValueError("POST_1PM_TIME_STOP_SECONDS must be > 0")
+    if settings.session_square_off_enabled:
+        try:
+            _ = settings.session_square_off_time
+            from datetime import time as _dt_time
+
+            _dt_time.fromisoformat(settings.session_square_off_time)
+        except Exception as exc:
+            raise ValueError(
+                "SESSION_SQUARE_OFF_TIME must be HH:MM or HH:MM:SS when SESSION_SQUARE_OFF_ENABLED=true"
+            ) from exc
 
     if settings.enable_hard_stop:
         if settings.hard_stop_points <= 0:
@@ -157,6 +214,40 @@ def _validate(settings: Settings) -> None:
             )
     if settings.hard_stop_arm_after_seconds < 0:
         raise ValueError("HARD_STOP_ARM_AFTER_SECONDS must be >= 0")
+    if settings.microburst_min_score < 0:
+        raise ValueError("MICROBURST_MIN_SCORE must be >= 0")
+    if settings.promoted_min_score < settings.microburst_min_score:
+        raise ValueError("PROMOTED_MIN_SCORE must be >= MICROBURST_MIN_SCORE")
+    if settings.microburst_ind_accel_threshold_1 <= 0:
+        raise ValueError("MICROBURST_IND_ACCEL_THRESHOLD_1 must be > 0")
+    if settings.microburst_ind_accel_threshold_2 <= settings.microburst_ind_accel_threshold_1:
+        raise ValueError("MICROBURST_IND_ACCEL_THRESHOLD_2 must be > MICROBURST_IND_ACCEL_THRESHOLD_1")
+    if settings.microburst_opt_velocity_threshold <= 0:
+        raise ValueError("MICROBURST_OPT_VELOCITY_THRESHOLD must be > 0")
+    if settings.microburst_opt_depth_imb_threshold <= 0:
+        raise ValueError("MICROBURST_OPT_DEPTH_IMB_THRESHOLD must be > 0")
+    if settings.microburst_ind_velocity_min <= 0:
+        raise ValueError("MICROBURST_IND_VELOCITY_MIN must be > 0")
+    if settings.microburst_ind_velocity_max <= settings.microburst_ind_velocity_min:
+        raise ValueError("MICROBURST_IND_VELOCITY_MAX must be > MICROBURST_IND_VELOCITY_MIN")
+    if settings.normal_target_points <= 0:
+        raise ValueError("NORMAL_TARGET_POINTS must be > 0")
+    if settings.promoted_target_points <= settings.normal_target_points:
+        raise ValueError("PROMOTED_TARGET_POINTS must be > NORMAL_TARGET_POINTS")
+    if settings.promoted_3s_min_runup_points <= 0:
+        raise ValueError("PROMOTED_3S_MIN_RUNUP_POINTS must be > 0")
+    if settings.promoted_3s_min_pnl_points <= 0:
+        raise ValueError("PROMOTED_3S_MIN_PNL_POINTS must be > 0")
+    if settings.promoted_3s_max_mae_points <= 0:
+        raise ValueError("PROMOTED_3S_MAX_MAE_POINTS must be > 0")
+    if settings.promoted_3s_min_velocity_decay_ratio <= 0:
+        raise ValueError("PROMOTED_3S_MIN_VELOCITY_DECAY_RATIO must be > 0")
+    if settings.layer4_trigger_points <= 0:
+        raise ValueError("LAYER4_TRIGGER_POINTS must be > 0")
+    if settings.layer4_required_followthrough_points <= settings.layer4_trigger_points:
+        raise ValueError("LAYER4_REQUIRED_FOLLOWTHROUGH_POINTS must be > LAYER4_TRIGGER_POINTS")
+    if settings.layer4_window_seconds <= 0:
+        raise ValueError("LAYER4_WINDOW_SECONDS must be > 0")
 
     if settings.enable_early_risk:
         if settings.early_risk_suspicion_seconds <= 0:
@@ -169,6 +260,32 @@ def _validate(settings: Settings) -> None:
     if settings.enable_path_risk:
         if settings.path_risk_check_seconds <= settings.early_risk_exit_seconds:
             raise ValueError("PATH_RISK_CHECK_SECONDS must be greater than EARLY_RISK_EXIT_SECONDS")
+
+    if settings.enable_edge_invalidation:
+        if settings.edge_invalidation_1s_check_seconds <= 0:
+            raise ValueError("EDGE_INVALIDATION_1S_CHECK_SECONDS must be > 0")
+        if settings.edge_invalidation_3s_check_seconds <= 0:
+            raise ValueError("EDGE_INVALIDATION_3S_CHECK_SECONDS must be > 0")
+        if (
+            settings.edge_invalidation_1s_enabled
+            and settings.edge_invalidation_3s_enabled
+            and settings.edge_invalidation_3s_check_seconds <= settings.edge_invalidation_1s_check_seconds
+        ):
+            raise ValueError(
+                "EDGE_INVALIDATION_3S_CHECK_SECONDS must be greater than EDGE_INVALIDATION_1S_CHECK_SECONDS"
+            )
+        if settings.edge_invalidation_1s_min_runup_points < 0:
+            raise ValueError("EDGE_INVALIDATION_1S_MIN_RUNUP_POINTS must be >= 0")
+        if settings.edge_invalidation_3s_min_runup_points < 0:
+            raise ValueError("EDGE_INVALIDATION_3S_MIN_RUNUP_POINTS must be >= 0")
+        if settings.edge_invalidation_3s_max_drawdown_points <= 0:
+            raise ValueError("EDGE_INVALIDATION_3S_MAX_DRAWDOWN_POINTS must be > 0")
+        if settings.edge_invalidation_3s_pinned_pnl_abs_points < 0:
+            raise ValueError("EDGE_INVALIDATION_3S_PINNED_PNL_ABS_POINTS must be >= 0")
+        if settings.edge_invalidation_hard_stop_enabled and settings.edge_invalidation_hard_stop_points <= 0:
+            raise ValueError("EDGE_INVALIDATION_HARD_STOP_POINTS must be > 0")
+        if settings.edge_invalidation_stale_quote_max_seconds <= 0:
+            raise ValueError("EDGE_INVALIDATION_STALE_QUOTE_MAX_SECONDS must be > 0")
 
     if settings.enable_dynamic_risky_target:
         if settings.risky_target_points <= 0:
@@ -250,7 +367,11 @@ def load_settings() -> Settings:
         control_path=Path(os.getenv("CONTROL_PATH", "runtime/control.json")),
         entry_cutoff_time=os.getenv("ENTRY_CUTOFF_TIME", "14:55"),
         entry_window_seconds=int(os.getenv("ENTRY_WINDOW_SECONDS", "40")),
+        entry_window_max_seconds=float(os.getenv("ENTRY_WINDOW_MAX_SECONDS", "10.0")),
+        entry_feature_lookback_seconds=float(os.getenv("ENTRY_FEATURE_LOOKBACK_SECONDS", "5.0")),
         post_1pm_time_stop_seconds=int(os.getenv("POST_1PM_TIME_STOP_SECONDS", "60")),
+        session_square_off_enabled=_bool("SESSION_SQUARE_OFF_ENABLED", "false"),
+        session_square_off_time=os.getenv("SESSION_SQUARE_OFF_TIME", "15:15"),
         early_failure_window_seconds=int(os.getenv("EARLY_FAILURE_WINDOW_SECONDS", "15")),
         early_failure_mfe_min=float(os.getenv("EARLY_FAILURE_MFE_MIN", "1.5")),
         early_failure_mae_max=float(os.getenv("EARLY_FAILURE_MAE_MAX", "-1.5")),
@@ -270,6 +391,47 @@ def load_settings() -> Settings:
         continuation_call_hard_stop_points=float(
             os.getenv("CONTINUATION_CALL_HARD_STOP_POINTS", "6")
         ),
+        enable_microburst_gate=_bool("ENABLE_MICROBURST_GATE", "true"),
+        microburst_min_score=int(os.getenv("MICROBURST_MIN_SCORE", "3")),
+        microburst_ind_accel_threshold_1=float(
+            os.getenv("MICROBURST_IND_ACCEL_THRESHOLD_1", "1.688")
+        ),
+        microburst_ind_accel_threshold_2=float(
+            os.getenv("MICROBURST_IND_ACCEL_THRESHOLD_2", "3.945")
+        ),
+        microburst_opt_velocity_threshold=float(
+            os.getenv("MICROBURST_OPT_VELOCITY_THRESHOLD", "1.583")
+        ),
+        microburst_opt_depth_imb_threshold=float(
+            os.getenv("MICROBURST_OPT_DEPTH_IMB_THRESHOLD", "0.0857")
+        ),
+        microburst_ind_velocity_min=float(
+            os.getenv("MICROBURST_IND_VELOCITY_MIN", "1.646")
+        ),
+        microburst_ind_velocity_max=float(
+            os.getenv("MICROBURST_IND_VELOCITY_MAX", "2.356")
+        ),
+        normal_target_points=float(os.getenv("NORMAL_TARGET_POINTS", "3.0")),
+        promoted_min_score=int(os.getenv("PROMOTED_MIN_SCORE", "5")),
+        promoted_target_points=float(os.getenv("PROMOTED_TARGET_POINTS", "7.0")),
+        promoted_3s_min_runup_points=float(
+            os.getenv("PROMOTED_3S_MIN_RUNUP_POINTS", "4.0")
+        ),
+        promoted_3s_min_pnl_points=float(
+            os.getenv("PROMOTED_3S_MIN_PNL_POINTS", "1.5")
+        ),
+        promoted_3s_max_mae_points=float(
+            os.getenv("PROMOTED_3S_MAX_MAE_POINTS", "3.5")
+        ),
+        promoted_3s_min_velocity_decay_ratio=float(
+            os.getenv("PROMOTED_3S_MIN_VELOCITY_DECAY_RATIO", "0.5")
+        ),
+        layer4_enabled=_bool("LAYER4_ENABLED", "true"),
+        layer4_trigger_points=float(os.getenv("LAYER4_TRIGGER_POINTS", "3.0")),
+        layer4_required_followthrough_points=float(
+            os.getenv("LAYER4_REQUIRED_FOLLOWTHROUGH_POINTS", "4.5")
+        ),
+        layer4_window_seconds=float(os.getenv("LAYER4_WINDOW_SECONDS", "2.0")),
         enable_early_risk=_bool("ENABLE_EARLY_RISK", "true"),
         early_risk_suspicion_seconds=int(os.getenv("EARLY_RISK_SUSPICION_SECONDS", "5")),
         early_risk_exit_seconds=int(os.getenv("EARLY_RISK_EXIT_SECONDS", "10")),
@@ -291,6 +453,54 @@ def load_settings() -> Settings:
         path_risk_runup_max_for_exit=float(os.getenv("PATH_RISK_RUNUP_MAX_FOR_EXIT", "2.0")),
         path_risk_strict_after_1pm=_bool("PATH_RISK_STRICT_AFTER_1PM", "true"),
         path_risk_tighten_if_fragile=_bool("PATH_RISK_TIGHTEN_IF_FRAGILE", "true"),
+        enable_edge_invalidation=_bool("ENABLE_EDGE_INVALIDATION", "true"),
+        edge_invalidation_1s_enabled=_bool("EDGE_INVALIDATION_1S_ENABLED", "true"),
+        edge_invalidation_3s_enabled=_bool("EDGE_INVALIDATION_3S_ENABLED", "true"),
+        edge_invalidation_1s_check_seconds=float(
+            os.getenv("EDGE_INVALIDATION_1S_CHECK_SECONDS", "1.0")
+        ),
+        edge_invalidation_3s_check_seconds=float(
+            os.getenv("EDGE_INVALIDATION_3S_CHECK_SECONDS", "3.0")
+        ),
+        edge_invalidation_1s_min_runup_points=float(
+            os.getenv("EDGE_INVALIDATION_1S_MIN_RUNUP_POINTS", "1.0")
+        ),
+        edge_invalidation_1s_max_pnl_points=float(
+            os.getenv("EDGE_INVALIDATION_1S_MAX_PNL_POINTS", "0.0")
+        ),
+        edge_invalidation_3s_min_runup_points=float(
+            os.getenv("EDGE_INVALIDATION_3S_MIN_RUNUP_POINTS", "2.0")
+        ),
+        edge_invalidation_3s_max_drawdown_points=float(
+            os.getenv("EDGE_INVALIDATION_3S_MAX_DRAWDOWN_POINTS", "4.0")
+        ),
+        edge_invalidation_3s_pinned_pnl_abs_points=float(
+            os.getenv("EDGE_INVALIDATION_3S_PINNED_PNL_ABS_POINTS", "1.0")
+        ),
+        edge_invalidation_hard_stop_points=float(
+            os.getenv("EDGE_INVALIDATION_HARD_STOP_POINTS", "6.0")
+        ),
+        edge_invalidation_hard_stop_enabled=_bool(
+            "EDGE_INVALIDATION_HARD_STOP_ENABLED", "true"
+        ),
+        edge_invalidation_stale_quote_max_seconds=float(
+            os.getenv("EDGE_INVALIDATION_STALE_QUOTE_MAX_SECONDS", "1.5")
+        ),
+        edge_invalidation_kill_on_stale_quotes=_bool(
+            "EDGE_INVALIDATION_KILL_ON_STALE_QUOTES", "false"
+        ),
+        edge_invalidation_require_subsecond_precision=_bool(
+            "EDGE_INVALIDATION_REQUIRE_SUBSECOND_PRECISION", "false"
+        ),
+        edge_invalidation_use_underlying_confirmation=_bool(
+            "EDGE_INVALIDATION_USE_UNDERLYING_CONFIRMATION", "false"
+        ),
+        edge_invalidation_use_spread_filter=_bool(
+            "EDGE_INVALIDATION_USE_SPREAD_FILTER", "false"
+        ),
+        prefer_edge_invalidation_over_legacy_early_risk=_bool(
+            "PREFER_EDGE_INVALIDATION_OVER_LEGACY_EARLY_RISK", "true"
+        ),
         enable_dynamic_risky_target=_bool("ENABLE_DYNAMIC_RISKY_TARGET", "true"),
         risky_target_points=float(os.getenv("RISKY_TARGET_POINTS", "2.0")),
         strict_after_1pm_risky_target_points=float(
