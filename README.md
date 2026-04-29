@@ -1,3 +1,13 @@
+# Sensex Noise Strategy
+
+Main logic:
+- src/strategy_runtime.py
+- src/entry_logic.py
+
+Ignore:
+- logs/
+- data/
+
 # Sensex Noise Paper/Live Trading Engine
 
 Python engine for Sensex option signal execution with layered risk exits, websocket-first market data, structured event telemetry, and enriched ML-ready trade summaries.
