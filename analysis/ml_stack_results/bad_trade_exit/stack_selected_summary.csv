@@ -1,0 +1,2 @@
+model,baseline_total_pnl,policy_total_pnl,delta_vs_baseline_pnl,exit_rate_1s,exit_rate_3s,baseline_bad_loss,policy_bad_loss,bad_loss_reduction,winner_giveback_ratio,positive_day_ratio,worst_day_delta_pnl
+hgb,-8325.000000000602,11924.999999999643,20250.00000000024,0.0,0.1610738255033557,303700.0000000008,280675.0000000006,0.0758149489627928,0.025602968460111102,0.3333333333333333,0.0

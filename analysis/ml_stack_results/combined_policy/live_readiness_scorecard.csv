@@ -1,0 +1,19 @@
+gate,actual,threshold,passed,notes
+data_post_patch_days,9.0,>= 20,False,Minimum post-patch trading days for live sign-off.
+data_entry_ready_rows,447.0,>= 1200,False,Entry filter sample size gate.
+data_target_rows,174.0,>= 500,False,Non-bad target-promotion sample size gate.
+entry_bad_rate_reduction,0.00519574987660097,>= 0.20,False,Accepted trades should materially reduce bad-trade incidence.
+entry_trade_retention,0.9463087248322147,>= 0.60,True,Avoid shrinking the strategy too much.
+entry_non_bad_pnl_retention,0.9554730983302412,>= 0.85,True,Good trade gross should mostly survive the filter.
+entry_total_pnl_delta,-2774.999999999949,> 0,False,Shadow entry filter must add net PnL.
+exit_bad_loss_reduction,0.0758149489627928,>= 0.25,False,Bad-trade loss should reduce materially.
+exit_winner_giveback,0.025602968460111102,<= 0.10,True,Do not kill too much winner gross.
+exit_total_pnl_delta,20250.00000000024,> 0,True,Exit layer must add net PnL.
+exit_worst_day,0.0,>= -10000,True,Single-day underperformance guardrail.
+target_total_pnl_delta,59050.0000000001,> 0,True,Promotion layer must improve total counterfactual PnL.
+target_positive_day_ratio,0.7777777777777778,>= 0.60,True,"Promotion gains should be broad, not one-day only."
+target_over_promotion_ratio,0.5601755119097359,<= 0.40,False,Over-promotion losses should stay well below runner gains.
+combined_total_pnl_delta,67800.00000000041,> 0,True,End-to-end stack must beat realized baseline.
+combined_positive_day_ratio,0.6666666666666666,>= 0.60,True,Combined stack should improve most days.
+combined_worst_day,-7699.999999999933,>= -10000,True,Single-day underperformance guardrail.
+combined_last_5_days_stable,4.0,>= 4 of last 5 and total delta >= 0,True,Simple recent-stability heuristic for shadow sign-off.

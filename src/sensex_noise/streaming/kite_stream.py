@@ -54,6 +54,13 @@ class KiteStream:
         rebase_persist_ticks: int = 3,
         rebase_cooldown_seconds: float = 3.0,
         rebase_min_move_points: int = 100,
+        enable_sensex_option_tape_recorder: bool = False,
+        sensex_tape_strike_range_points: int = 1500,
+        sensex_tape_strike_step_points: int = 100,
+        sensex_tape_expiry_mode: str = "nearest",
+        sensex_tape_include_ce: bool = True,
+        sensex_tape_include_pe: bool = True,
+        sensex_tape_rebase_on_atm_move_points: int = 100,
     ) -> None:
         self.api_key = api_key
         self.access_token = access_token
@@ -69,6 +76,15 @@ class KiteStream:
         self.rebase_persist_ticks = max(1, int(rebase_persist_ticks))
         self.rebase_cooldown_seconds = max(0.0, float(rebase_cooldown_seconds))
         self.rebase_min_move_points = max(1, int(rebase_min_move_points))
+        self.enable_sensex_option_tape_recorder = bool(enable_sensex_option_tape_recorder)
+        self.sensex_tape_strike_range_points = max(0, int(sensex_tape_strike_range_points))
+        self.sensex_tape_strike_step_points = max(1, int(sensex_tape_strike_step_points))
+        self.sensex_tape_expiry_mode = str(sensex_tape_expiry_mode).strip().lower()
+        self.sensex_tape_include_ce = bool(sensex_tape_include_ce)
+        self.sensex_tape_include_pe = bool(sensex_tape_include_pe)
+        self.sensex_tape_rebase_on_atm_move_points = max(
+            1, int(sensex_tape_rebase_on_atm_move_points)
+        )
 
         self._lock = threading.Lock()
 
@@ -100,9 +116,15 @@ class KiteStream:
         self._last_error_reason: str | None = None
 
         self._current_atm: int | None = None
+        self._current_tape_atm: int | None = None
         self._desired_option_tokens: set[int] = set()
+        self._desired_strategy_option_tokens: set[int] = set()
+        self._desired_tape_option_tokens: set[int] = set()
         self._applied_option_tokens: set[int] = set()
+        self._applied_strategy_option_tokens: set[int] = set()
+        self._applied_tape_option_tokens: set[int] = set()
         self._subscriptions_applied_generation: int | None = None
+        self._last_tape_rebase_ts: datetime | None = None
 
         self._rebase_candidate_atm: int | None = None
         self._rebase_candidate_count = 0
@@ -139,6 +161,29 @@ class KiteStream:
     def subscribed_token_count(self) -> int:
         with self._lock:
             return 2 + len(self._desired_option_tokens)
+
+    def _strategy_option_tokens(self) -> set[int]:
+        return set(getattr(self, "_desired_strategy_option_tokens", set()))
+
+    def _tape_option_tokens(self) -> set[int]:
+        return set(getattr(self, "_desired_tape_option_tokens", set()))
+
+    def _combined_desired_option_tokens(self) -> set[int]:
+        return self._strategy_option_tokens() | self._tape_option_tokens()
+
+    def _build_tape_option_tokens_for_atm(self, atm: int, now: datetime) -> set[int]:
+        if not bool(getattr(self, "enable_sensex_option_tape_recorder", False)):
+            return set()
+        metas = self.registry.option_tape_universe_for_atm(
+            atm=atm,
+            now=now,
+            range_points=int(getattr(self, "sensex_tape_strike_range_points", 1500)),
+            step_points=int(getattr(self, "sensex_tape_strike_step_points", 100)),
+            expiry_mode=str(getattr(self, "sensex_tape_expiry_mode", "nearest")),
+            include_ce=bool(getattr(self, "sensex_tape_include_ce", True)),
+            include_pe=bool(getattr(self, "sensex_tape_include_pe", True)),
+        )
+        return {int(meta.instrument_token) for meta in metas}
 
     def start(self) -> None:
         self._start_new_generation(reason="start", reconnecting=False)
@@ -245,6 +290,10 @@ class KiteStream:
                 "active_applied_subscribed_count": 2 + len(self._applied_option_tokens),
                 "current_option_lattice_size": len(self._desired_option_tokens),
                 "current_atm_reference": self._current_atm,
+                "strategy_option_lattice_size": len(getattr(self, "_desired_strategy_option_tokens", set())),
+                "tape_option_lattice_size": len(getattr(self, "_desired_tape_option_tokens", set())),
+                "current_tape_atm_reference": getattr(self, "_current_tape_atm", None),
+                "tape_recorder_enabled": bool(getattr(self, "enable_sensex_option_tape_recorder", False)),
                 "retiring_generations": sorted(self._retiring_generation_ids),
                 "retiring_generations_count": len(self._retiring_generation_ids),
                 "state_entered_at": state_entered_at.isoformat() if state_entered_at else None,
@@ -260,6 +309,7 @@ class KiteStream:
 
         with self._lock:
             old_atm = self._current_atm
+            old_tape_atm = getattr(self, "_current_tape_atm", None)
             last_rebase_ts = self._last_rebase_ts
             candidate_atm = self._rebase_candidate_atm
             candidate_count = self._rebase_candidate_count
@@ -267,6 +317,7 @@ class KiteStream:
             active_gen = self._active_generation_id
             info = self._generations.get(active_gen) if active_gen is not None else None
             active_ticker = info.ticker if info is not None else None
+            existing_tape_tokens = set(getattr(self, "_desired_tape_option_tokens", set()))
 
         if old_atm is not None and abs(target_atm - old_atm) < self.rebase_min_move_points:
             with self._lock:
@@ -311,11 +362,24 @@ class KiteStream:
             )
             return False
 
-        option_metas = self.registry.option_lattice_for_atm(atm=target_atm, now=now)
-        new_option_tokens = {meta.instrument_token for meta in option_metas}
-        if not new_option_tokens and old_atm is not None:
+        strategy_metas = self.registry.option_lattice_for_atm(atm=target_atm, now=now)
+        new_strategy_tokens = {int(meta.instrument_token) for meta in strategy_metas}
+        if not new_strategy_tokens and old_atm is not None:
             logger.warning("Option lattice empty for ATM=%s; keeping previous subscriptions", target_atm)
             return False
+
+        tape_rebuilt = False
+        new_tape_tokens = set(existing_tape_tokens)
+        if bool(getattr(self, "enable_sensex_option_tape_recorder", False)):
+            if old_tape_atm is None or abs(target_atm - old_tape_atm) >= int(
+                getattr(self, "sensex_tape_rebase_on_atm_move_points", 100)
+            ):
+                new_tape_tokens = self._build_tape_option_tokens_for_atm(atm=target_atm, now=now)
+                tape_rebuilt = True
+        else:
+            new_tape_tokens = set()
+
+        new_option_tokens = new_strategy_tokens | new_tape_tokens
 
         with self._lock:
             old_tokens = set(self._desired_option_tokens)
@@ -326,8 +390,17 @@ class KiteStream:
         final_tokens = new_option_tokens | retained_old
 
         with self._lock:
+            self._desired_strategy_option_tokens = set(new_strategy_tokens)
+            self._desired_tape_option_tokens = set(new_tape_tokens)
             self._desired_option_tokens = set(final_tokens)
             self._current_atm = target_atm
+            if bool(getattr(self, "enable_sensex_option_tape_recorder", False)):
+                if tape_rebuilt:
+                    self._current_tape_atm = target_atm
+                    self._last_tape_rebase_ts = now
+            else:
+                self._current_tape_atm = None
+                self._last_tape_rebase_ts = None
             self._rebase_candidate_atm = None
             self._rebase_candidate_count = 0
             self._last_rebase_ts = datetime.now()
@@ -350,6 +423,8 @@ class KiteStream:
 
                 with self._lock:
                     self._applied_option_tokens = set(final_tokens)
+                    self._applied_strategy_option_tokens = set(new_strategy_tokens)
+                    self._applied_tape_option_tokens = set(new_tape_tokens)
                     if active_gen is not None:
                         self._subscriptions_applied_generation = active_gen
             except Exception as exc:
@@ -365,6 +440,19 @@ class KiteStream:
                 )
                 logger.exception("Lattice rebase error")
                 return False
+
+        if bool(getattr(self, "enable_sensex_option_tape_recorder", False)) and tape_rebuilt:
+            self._emit_event(
+                "SENSEX_TAPE_REBASE",
+                {
+                    "timestamp": now.isoformat(),
+                    "old_tape_atm": old_tape_atm,
+                    "new_tape_atm": target_atm,
+                    "tape_token_count": len(new_tape_tokens),
+                    "strategy_token_count": len(new_strategy_tokens),
+                    "combined_option_token_count": len(final_tokens),
+                },
+            )
 
         logger.info(
             "Lattice rebased | old_atm=%s | new_atm=%s | subscribed=%d | unsubscribed=%d | kept=%d",
@@ -521,15 +609,24 @@ class KiteStream:
         with self._lock:
             desired_tokens = sorted(self._desired_option_tokens)
             current_atm = self._current_atm
+            strategy_tokens = sorted(getattr(self, "_desired_strategy_option_tokens", set()))
+            tape_tokens = sorted(getattr(self, "_desired_tape_option_tokens", set()))
 
         if not desired_tokens:
             atm_hint = current_atm if current_atm is not None else self.registry.initial_atm_hint()
             if atm_hint is not None:
-                option_metas = self.registry.option_lattice_for_atm(atm=atm_hint, now=datetime.now())
-                desired_tokens = [meta.instrument_token for meta in option_metas]
+                strategy_metas = self.registry.option_lattice_for_atm(atm=atm_hint, now=datetime.now())
+                strategy_tokens = [int(meta.instrument_token) for meta in strategy_metas]
+                tape_tokens = sorted(self._build_tape_option_tokens_for_atm(atm=atm_hint, now=datetime.now()))
+                desired_tokens = sorted(set(strategy_tokens) | set(tape_tokens))
                 with self._lock:
+                    self._desired_strategy_option_tokens = set(strategy_tokens)
+                    self._desired_tape_option_tokens = set(tape_tokens)
                     self._desired_option_tokens = set(desired_tokens)
                     self._current_atm = atm_hint
+                    if bool(getattr(self, "enable_sensex_option_tape_recorder", False)):
+                        self._current_tape_atm = atm_hint
+                        self._last_tape_rebase_ts = datetime.now()
 
         if desired_tokens:
             ws.subscribe(desired_tokens)
@@ -542,6 +639,8 @@ class KiteStream:
             info.subscriptions_ready = True
             info.subscriptions_applied_at = datetime.now()
             self._applied_option_tokens = set(desired_tokens)
+            self._applied_strategy_option_tokens = set(strategy_tokens)
+            self._applied_tape_option_tokens = set(tape_tokens)
             self._subscriptions_applied_generation = generation_id
 
         self._emit_event(
@@ -551,6 +650,8 @@ class KiteStream:
                 "generation_id": generation_id,
                 "base_count": len(base_tokens),
                 "option_count": len(desired_tokens),
+                "strategy_option_count": len(strategy_tokens),
+                "tape_option_count": len(tape_tokens),
                 "total_count": len(base_tokens) + len(desired_tokens),
             },
         )

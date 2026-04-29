@@ -26,14 +26,20 @@ class TickJournal:
         max_queue_size: int = 50000,
         flush_interval_seconds: float = 1.0,
         enable_full_option_tape_logging: bool = False,
+        enable_sensex_option_tape_recorder: bool = False,
+        sensex_tape_log_dir: Path = Path("data/tape/sensex_options"),
+        sensex_tape_write_legacy_options_log: bool = True,
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self.logs_root = logs_root
         self.ticks_root = logs_root / "ticks"
         self.trade_ticks_root = logs_root / "trade_ticks"
+        self.sensex_tape_log_dir = sensex_tape_log_dir
 
         self.flush_interval_seconds = max(0.1, float(flush_interval_seconds))
         self.enable_full_option_tape_logging = bool(enable_full_option_tape_logging)
+        self.enable_sensex_option_tape_recorder = bool(enable_sensex_option_tape_recorder)
+        self.sensex_tape_write_legacy_options_log = bool(sensex_tape_write_legacy_options_log)
         self.on_event = on_event
 
         self._queue: queue.Queue[_WriteJob | None] = queue.Queue(maxsize=int(max_queue_size))
@@ -76,15 +82,56 @@ class TickJournal:
         elif source == "future":
             name = "futures.jsonl"
         elif source == "option":
-            if not self.enable_full_option_tape_logging:
-                return True
-            name = "options.jsonl"
+            day = self._day_for_tick(tick)
+            wrote_any = True
+            should_write_legacy = self.enable_full_option_tape_logging and (
+                self.sensex_tape_write_legacy_options_log or not self.enable_sensex_option_tape_recorder
+            )
+            if should_write_legacy:
+                legacy_path = self.ticks_root / day / "options.jsonl"
+                wrote_any = self._enqueue(
+                    path=legacy_path,
+                    record=tick,
+                    critical=False,
+                    category="market",
+                )
+            if self.enable_sensex_option_tape_recorder:
+                tape_path = self.sensex_tape_log_dir / day / "options.jsonl"
+                tape_record = dict(tick)
+                tape_record["tape_source"] = "sensex_option_tape"
+                wrote_tape = self._enqueue(
+                    path=tape_path,
+                    record=tape_record,
+                    critical=False,
+                    category="sensex_option_tape",
+                )
+                wrote_any = wrote_any and wrote_tape
+            return wrote_any
         else:
             return True
 
         day = self._day_for_tick(tick)
         path = self.ticks_root / day / name
         return self._enqueue(path=path, record=tick, critical=False, category="market")
+
+    def append_tape_subscription_snapshot(self, day: str, snapshot: dict[str, Any]) -> bool:
+        path = self.sensex_tape_log_dir / day / "subscriptions.jsonl"
+        return self._enqueue(
+            path=path,
+            record=snapshot,
+            critical=False,
+            category="sensex_option_tape_subscription",
+        )
+
+    def write_tape_manifest(self, day: str, manifest: dict[str, Any]) -> None:
+        path = self.sensex_tape_log_dir / day / "manifest.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps(self._jsonable(manifest), indent=2, ensure_ascii=True),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
 
     def append_trade_tick(
         self,

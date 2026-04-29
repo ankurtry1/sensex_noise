@@ -120,6 +120,15 @@ class Settings:
     enable_slippage_logging: bool
     target_reprice_debounce_seconds: int
     enable_full_option_tape_logging: bool
+    enable_sensex_option_tape_recorder: bool
+    sensex_tape_strike_range_points: int
+    sensex_tape_strike_step_points: int
+    sensex_tape_expiry_mode: str
+    sensex_tape_include_ce: bool
+    sensex_tape_include_pe: bool
+    sensex_tape_rebase_on_atm_move_points: int
+    sensex_tape_log_dir: Path
+    sensex_tape_write_legacy_options_log: bool
     stream_watchdog_max_idle_seconds: int
     watchdog_hard_reconnect_seconds: int
     stream_reconnect_cooldown_seconds: int
@@ -303,6 +312,20 @@ def _validate(settings: Settings) -> None:
         raise ValueError("POST_EXIT_OBSERVATION_SECONDS must be >= 0")
     if settings.target_reprice_debounce_seconds < 0:
         raise ValueError("TARGET_REPRICE_DEBOUNCE_SECONDS must be >= 0")
+    if settings.sensex_tape_strike_range_points < 0:
+        raise ValueError("SENSEX_TAPE_STRIKE_RANGE_POINTS must be >= 0")
+    if settings.sensex_tape_strike_step_points <= 0:
+        raise ValueError("SENSEX_TAPE_STRIKE_STEP_POINTS must be > 0")
+    if settings.sensex_tape_rebase_on_atm_move_points <= 0:
+        raise ValueError("SENSEX_TAPE_REBASE_ON_ATM_MOVE_POINTS must be > 0")
+    if settings.sensex_tape_expiry_mode != "nearest":
+        raise ValueError("SENSEX_TAPE_EXPIRY_MODE currently supports only: nearest")
+    if settings.enable_sensex_option_tape_recorder and not (
+        settings.sensex_tape_include_ce or settings.sensex_tape_include_pe
+    ):
+        raise ValueError(
+            "At least one of SENSEX_TAPE_INCLUDE_CE or SENSEX_TAPE_INCLUDE_PE must be true when ENABLE_SENSEX_OPTION_TAPE_RECORDER=true"
+        )
     if settings.stream_watchdog_max_idle_seconds <= 0:
         raise ValueError("STREAM_WATCHDOG_MAX_IDLE_SECONDS must be > 0")
     if settings.watchdog_hard_reconnect_seconds <= 0:
@@ -518,6 +541,19 @@ def load_settings() -> Settings:
         enable_slippage_logging=_bool("ENABLE_SLIPPAGE_LOGGING", "true"),
         target_reprice_debounce_seconds=int(os.getenv("TARGET_REPRICE_DEBOUNCE_SECONDS", "2")),
         enable_full_option_tape_logging=_bool("ENABLE_FULL_OPTION_TAPE_LOGGING", "false"),
+        enable_sensex_option_tape_recorder=_bool("ENABLE_SENSEX_OPTION_TAPE_RECORDER", "false"),
+        sensex_tape_strike_range_points=int(os.getenv("SENSEX_TAPE_STRIKE_RANGE_POINTS", "1500")),
+        sensex_tape_strike_step_points=int(os.getenv("SENSEX_TAPE_STRIKE_STEP_POINTS", "100")),
+        sensex_tape_expiry_mode=os.getenv("SENSEX_TAPE_EXPIRY_MODE", "nearest").strip().lower(),
+        sensex_tape_include_ce=_bool("SENSEX_TAPE_INCLUDE_CE", "true"),
+        sensex_tape_include_pe=_bool("SENSEX_TAPE_INCLUDE_PE", "true"),
+        sensex_tape_rebase_on_atm_move_points=int(
+            os.getenv("SENSEX_TAPE_REBASE_ON_ATM_MOVE_POINTS", "100")
+        ),
+        sensex_tape_log_dir=Path(os.getenv("SENSEX_TAPE_LOG_DIR", "data/tape/sensex_options")),
+        sensex_tape_write_legacy_options_log=_bool(
+            "SENSEX_TAPE_WRITE_LEGACY_OPTIONS_LOG", "true"
+        ),
         stream_watchdog_max_idle_seconds=int(os.getenv("STREAM_WATCHDOG_MAX_IDLE_SECONDS", "5")),
         watchdog_hard_reconnect_seconds=int(os.getenv("WATCHDOG_HARD_RECONNECT_SECONDS", "8")),
         stream_reconnect_cooldown_seconds=int(os.getenv("STREAM_RECONNECT_COOLDOWN_SECONDS", "10")),

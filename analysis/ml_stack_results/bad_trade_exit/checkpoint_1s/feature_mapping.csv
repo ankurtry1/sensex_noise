@@ -1,0 +1,17 @@
+feature,feature_type,resolved_column,status,non_null_count
+idx_pre_velocity_aligned,numeric,idx_pre_velocity_aligned,used,600
+idx_pre_accel_aligned,numeric,idx_pre_accel_aligned,used,574
+opt_pre_velocity_5s,numeric,opt_pre_velocity_5s,used,560
+opt_pre_depth_imb_mean,numeric,opt_pre_depth_imb_mean,used,586
+opt_pre_spread_mean,numeric,opt_pre_spread_mean,used,586
+burst_score_reconstructed,numeric,burst_score_reconstructed,used,600
+pre_entry_option_tick_count,numeric,pre_entry_option_tick_count,used,600
+pre_entry_index_tick_count,numeric,pre_entry_index_tick_count,used,600
+pnl_0p25s,numeric,pnl_0p25s,used,420
+pnl_0p5s,numeric,pnl_0p5s,used,463
+feat_pnl_1s,numeric,feat_pnl_1s,used,545
+feat_runup_1s,numeric,feat_runup_1s,used,545
+feat_drawdown_1s,numeric,feat_drawdown_1s,used,545
+pre_or_post_1pm,categorical,pre_or_post_1pm,used,600
+continuation_or_reversal,categorical,continuation_or_reversal,used,600
+call_or_put,categorical,call_or_put,used,600

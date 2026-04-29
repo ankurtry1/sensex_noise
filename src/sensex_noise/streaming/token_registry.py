@@ -34,6 +34,7 @@ class TokenRegistry:
         self._index_meta: TokenMeta | None = None
         self._future_meta: TokenMeta | None = None
         self._active_option_symbols: set[str] = set()
+        self._active_tape_option_symbols: set[str] = set()
 
         self._seed_registry()
 
@@ -56,6 +57,10 @@ class TokenRegistry:
     @property
     def active_option_symbols(self) -> set[str]:
         return set(self._active_option_symbols)
+
+    @property
+    def active_tape_option_symbols(self) -> set[str]:
+        return set(self._active_tape_option_symbols)
 
     def meta_by_symbol(self, full_symbol: str) -> TokenMeta | None:
         return self._meta_by_symbol.get(full_symbol)
@@ -117,6 +122,64 @@ class TokenRegistry:
                 self._register(meta)
                 selected.append(meta)
         self._active_option_symbols = {meta.full_symbol for meta in selected}
+        return selected
+
+    def option_tape_universe_for_atm(
+        self,
+        atm: int,
+        now: datetime,
+        range_points: int = 1500,
+        step_points: int = 100,
+        expiry_mode: str = "nearest",
+        include_ce: bool = True,
+        include_pe: bool = True,
+    ) -> list[TokenMeta]:
+        normalized_atm = self.round_to_100(atm)
+        normalized_range = abs(int(range_points))
+        normalized_step = abs(int(step_points))
+        mode = str(expiry_mode).strip().lower()
+
+        if normalized_step <= 0:
+            raise ValueError("step_points must be > 0")
+        if mode != "nearest":
+            raise ValueError("expiry_mode currently supports only: nearest")
+
+        strike_grid = list(
+            range(
+                int(normalized_atm) - normalized_range,
+                int(normalized_atm) + normalized_range + 1,
+                normalized_step,
+            )
+        )
+        options = self._sensex_options_frame(now=now)
+        if options.empty:
+            self._active_tape_option_symbols = set()
+            return []
+
+        nearest_expiry = options["expiry"].min()
+        options = options[options["expiry"] == nearest_expiry]
+
+        selected: list[TokenMeta] = []
+        option_types: list[str] = []
+        if include_ce:
+            option_types.append("CE")
+        if include_pe:
+            option_types.append("PE")
+
+        for strike in strike_grid:
+            for opt_type in option_types:
+                rows = options[
+                    (options["instrument_type"].astype(str).str.upper() == opt_type)
+                    & (options["strike"].astype(float) == float(strike))
+                ]
+                if rows.empty:
+                    continue
+                row = rows.iloc[0]
+                meta = self._row_to_meta(row=row, source="option")
+                self._register(meta)
+                selected.append(meta)
+
+        self._active_tape_option_symbols = {meta.full_symbol for meta in selected}
         return selected
 
     def _seed_registry(self) -> None:

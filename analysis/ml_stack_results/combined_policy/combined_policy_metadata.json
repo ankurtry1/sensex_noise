@@ -1,0 +1,24 @@
+{
+  "repo_root": "/Users/ankurkumar/Downloads/sensex-noise-papertrade",
+  "analysis_dir": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis",
+  "eval_start_date": "2026-04-13",
+  "post_patch_start": "2026-04-13",
+  "selected_entry_model": "hgb",
+  "selected_exit_model": "hgb",
+  "selected_target_model": "hgb",
+  "entry_dataset_rows": 739,
+  "exit_1s_dataset_rows": 600,
+  "exit_3s_dataset_rows": 373,
+  "target_live_train_rows": 389,
+  "dataset_files": {
+    "canonical": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/canonical_trades_ml_dataset.csv",
+    "dictionary": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/canonical_trades_ml_dataset_dictionary.csv",
+    "coverage": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/canonical_trades_ml_dataset_coverage.csv",
+    "datewise_coverage": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/canonical_trades_ml_dataset_datewise_coverage.csv",
+    "entry_filter": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/entry_filter_dataset.csv",
+    "bad_trade_exit_1s": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/bad_trade_exit_1s_dataset.csv",
+    "bad_trade_exit_3s": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/bad_trade_exit_3s_dataset.csv",
+    "target_promotion_live": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/target_promotion_live_dataset.csv",
+    "target_promotion_shadow": "/Users/ankurkumar/Downloads/sensex-noise-papertrade/analysis/target_promotion_shadow_dataset.csv"
+  }
+}

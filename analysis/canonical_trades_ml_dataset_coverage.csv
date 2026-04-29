@@ -1,0 +1,2 @@
+rows_total,unique_trade_ids,date_min,date_max,source_has_enriched,source_has_inventory,source_has_early_path,source_has_trade_ticks,has_post_exit_recovery,ml_ready_entry_features,ml_ready_target_label,bad_trade_count
+1004,1004,2026-03-23,2026-04-24,739,557,557,739,739,739,823,434

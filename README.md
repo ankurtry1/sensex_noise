@@ -95,6 +95,16 @@ The engine now writes multiple logs in parallel:
 - Option raw full-day tape is controlled by `ENABLE_FULL_OPTION_TAPE_LOGGING`:
   - `false` (default): no full-day options tape
   - `true`: writes `logs/ticks/YYYY-MM-DD/options.jsonl`
+- Broad SENSEX option tape recorder is controlled independently by
+  `ENABLE_SENSEX_OPTION_TAPE_RECORDER`:
+  - `false` (default): no dedicated broad option tape
+  - `true`: subscribes a wider nearest-expiry SENSEX option lattice in addition to the
+    strategy lattice and writes:
+    - `data/tape/sensex_options/YYYY-MM-DD/options.jsonl`
+    - `data/tape/sensex_options/YYYY-MM-DD/subscriptions.jsonl`
+    - `data/tape/sensex_options/YYYY-MM-DD/manifest.json`
+  - `SENSEX_TAPE_WRITE_LEGACY_OPTIONS_LOG=false` suppresses duplicate writes into
+    `logs/ticks/YYYY-MM-DD/options.jsonl` even when the dedicated tape recorder is enabled
 - Trade-scoped option paths are always captured in:
   - `logs/trade_ticks/YYYY-MM-DD/<trade_id>.jsonl`
   - includes pre-entry (5s), in-trade, post-exit (15s)
@@ -128,6 +138,7 @@ Includes (non-exhaustive):
 - `EXIT_ORDER_SENT`, `EXIT_ORDER_ACKED`, `EXIT_FILLED`
 - `EXIT_DECISION_SELECTED`, `EXIT_EXECUTION_FAILED`
 - `POST_EXIT_OBSERVATION`, `POST_EXIT_OBSERVATION_ERROR`, `POST_EXIT_OBSERVATION_COMPLETED`
+- `SENSEX_TAPE_REBASE`
 - optional `POST_EXIT_COUNTERFACTUAL`
 - `TRADE_CLOSED_SUMMARY`
 
@@ -176,6 +187,15 @@ See `.env.example` for the full list. Key groups:
   - `TARGET_REPRICE_DEBOUNCE_SECONDS`
 - websocket/runtime hardening:
   - `ENABLE_FULL_OPTION_TAPE_LOGGING`
+  - `ENABLE_SENSEX_OPTION_TAPE_RECORDER`
+  - `SENSEX_TAPE_STRIKE_RANGE_POINTS`
+  - `SENSEX_TAPE_STRIKE_STEP_POINTS`
+  - `SENSEX_TAPE_EXPIRY_MODE`
+  - `SENSEX_TAPE_INCLUDE_CE`
+  - `SENSEX_TAPE_INCLUDE_PE`
+  - `SENSEX_TAPE_REBASE_ON_ATM_MOVE_POINTS`
+  - `SENSEX_TAPE_LOG_DIR`
+  - `SENSEX_TAPE_WRITE_LEGACY_OPTIONS_LOG`
   - `STREAM_WATCHDOG_MAX_IDLE_SECONDS`
   - `WATCHDOG_HARD_RECONNECT_SECONDS`
   - `STREAM_RECONNECT_COOLDOWN_SECONDS`
@@ -195,6 +215,29 @@ See `.env.example` for the full list. Key groups:
 ```bash
 python3 run.py
 ```
+
+Inspect a recorded broad option tape:
+
+```bash
+python3 scripts/inspect_option_tape.py --date 2026-04-24
+```
+
+## Shadow ML Stack
+
+The repo now includes an offline three-layer shadow ML stack for:
+
+- entry filtering on deterministic trade candidates
+- early bad-trade exits at `1s` and `3s`
+- target promotion over `keep_3` / `extend_to_5` / `extend_to_7`
+
+Run the full offline stack with:
+
+```bash
+python3 scripts/run_ml_stack_shadow.py --repo-root . --analysis-dir analysis --output-dir analysis/ml_stack_results
+```
+
+Outputs are written under `analysis/ml_stack_results/` plus refreshed canonical ML datasets in `analysis/`.
+This workflow is for offline/shadow evaluation only and does not change the live runtime under `src/sensex_noise/`.
 
 ## Runtime Manual Control
 

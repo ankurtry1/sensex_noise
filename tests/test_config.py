@@ -12,6 +12,10 @@ _REQUIRED = {
 def _seed_required(monkeypatch: pytest.MonkeyPatch) -> None:
     for key, value in _REQUIRED.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setenv("ENABLE_SENSEX_OPTION_TAPE_RECORDER", "false")
+    monkeypatch.setenv("SENSEX_TAPE_WRITE_LEGACY_OPTIONS_LOG", "true")
+    monkeypatch.setenv("BACKGROUND_TICK_QUEUE_MAXSIZE", "20000")
+    monkeypatch.setenv("JOURNAL_QUEUE_MAXSIZE", "50000")
 
 
 def test_snapshot_seconds_are_sorted_and_unique(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,6 +50,40 @@ def test_negative_hard_stop_arm_after_seconds_rejected(monkeypatch: pytest.Monke
     monkeypatch.setenv("HARD_STOP_ARM_AFTER_SECONDS", "-1")
 
     with pytest.raises(ValueError, match="HARD_STOP_ARM_AFTER_SECONDS"):
+        load_settings()
+
+
+def test_sensex_tape_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed_required(monkeypatch)
+
+    settings = load_settings()
+
+    assert settings.enable_sensex_option_tape_recorder is False
+    assert settings.sensex_tape_strike_range_points == 1500
+    assert settings.sensex_tape_strike_step_points == 100
+    assert settings.sensex_tape_expiry_mode == "nearest"
+    assert settings.sensex_tape_include_ce is True
+    assert settings.sensex_tape_include_pe is True
+    assert settings.sensex_tape_rebase_on_atm_move_points == 100
+    assert str(settings.sensex_tape_log_dir) == "data/tape/sensex_options"
+    assert settings.sensex_tape_write_legacy_options_log is True
+
+
+def test_invalid_sensex_tape_expiry_mode_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed_required(monkeypatch)
+    monkeypatch.setenv("SENSEX_TAPE_EXPIRY_MODE", "all")
+
+    with pytest.raises(ValueError, match="SENSEX_TAPE_EXPIRY_MODE"):
+        load_settings()
+
+
+def test_invalid_sensex_tape_leg_selection_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed_required(monkeypatch)
+    monkeypatch.setenv("ENABLE_SENSEX_OPTION_TAPE_RECORDER", "true")
+    monkeypatch.setenv("SENSEX_TAPE_INCLUDE_CE", "false")
+    monkeypatch.setenv("SENSEX_TAPE_INCLUDE_PE", "false")
+
+    with pytest.raises(ValueError, match="SENSEX_TAPE_INCLUDE_CE"):
         load_settings()
 
 
@@ -90,6 +128,14 @@ def test_hardening_runtime_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.edge_invalidation_kill_on_stale_quotes is False
     assert settings.prefer_edge_invalidation_over_legacy_early_risk is True
     assert settings.enable_full_option_tape_logging is False
+    assert settings.enable_sensex_option_tape_recorder is False
+    assert settings.sensex_tape_strike_range_points == 1500
+    assert settings.sensex_tape_strike_step_points == 100
+    assert settings.sensex_tape_expiry_mode == "nearest"
+    assert settings.sensex_tape_include_ce is True
+    assert settings.sensex_tape_include_pe is True
+    assert settings.sensex_tape_rebase_on_atm_move_points == 100
+    assert settings.sensex_tape_write_legacy_options_log is True
     assert settings.stream_watchdog_max_idle_seconds == 5
     assert settings.watchdog_hard_reconnect_seconds == 8
     assert settings.stream_reconnect_cooldown_seconds == 10
