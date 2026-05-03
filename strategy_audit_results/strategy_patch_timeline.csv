@@ -1,0 +1,25 @@
+date,patch_era,active_features,number_of_trades,notes,has_edge_1s3s,has_microburst_gate,has_promotion_logic,has_layer4_logic,has_full_option_tape
+2026-03-23,pre_1s3s,post_exit_observation,55,,False,False,False,False,False
+2026-03-24,pre_1s3s,post_exit_observation,57,,False,False,False,False,False
+2026-03-25,pre_1s3s,post_exit_observation,51,,False,False,False,False,False
+2026-03-27,pre_1s3s,post_exit_observation,48,,False,False,False,False,False
+2026-03-30,pre_1s3s,post_exit_observation,54,,False,False,False,False,False
+2026-04-01,pre_1s3s,post_exit_observation,57,dated trades.jsonl matches event log,False,False,False,False,False
+2026-04-02,pre_1s3s,post_exit_observation,57,dated trades.jsonl matches event log,False,False,False,False,False
+2026-04-06,pre_1s3s,post_exit_observation,53,dated trades.jsonl matches event log,False,False,False,False,False
+2026-04-07,pre_1s3s,post_exit_observation,18,dated trades.jsonl matches event log,False,False,False,False,False
+2026-04-08,pre_1s3s,post_exit_observation,35,dated trades.jsonl matches event log,False,False,False,False,False
+2026-04-09,pre_1s3s,post_exit_observation,25,dated trades.jsonl matches event log,False,False,False,False,False
+2026-04-10,pre_1s3s,post_exit_observation,47,dated trades.jsonl matches event log,False,False,False,False,False
+2026-04-13,edge_1s3s,"post_exit_observation, edge_1s3s",50,dated trades.jsonl matches event log,True,False,False,False,False
+2026-04-15,edge_1s3s,"post_exit_observation, edge_1s3s",46,dated trades.jsonl matches event log,True,False,False,False,False
+2026-04-16,edge_1s3s,"post_exit_observation, edge_1s3s",56,dated trades.jsonl matches event log,True,False,False,False,False
+2026-04-17,edge_1s3s,"post_exit_observation, edge_1s3s",50,dated trades.jsonl matches event log,True,False,False,False,False
+2026-04-20,edge_1s3s,"post_exit_observation, edge_1s3s",51,dated trades.jsonl matches event log,True,False,False,False,False
+2026-04-21,edge_1s3s,"post_exit_observation, edge_1s3s",42,dated trades.jsonl matches event log,True,False,False,False,False
+2026-04-22,burst_promotion,"post_exit_observation, edge_1s3s, microburst_gate, promotion_3s",46,dated trades.jsonl matches event log,True,True,True,False,False
+2026-04-23,burst_promotion,"post_exit_observation, edge_1s3s, microburst_gate, promotion_3s, layer4",54,dated trades.jsonl matches event log; layer4_events=2,True,True,True,True,False
+2026-04-24,burst_promotion_tape,"post_exit_observation, edge_1s3s, microburst_gate, promotion_3s, layer4, full_option_tape",52,dated trades.jsonl matches event log; layer4_events=2; tape_present,True,True,True,True,True
+2026-04-27,burst_promotion_tape,"post_exit_observation, edge_1s3s, microburst_gate, promotion_3s, full_option_tape",48,dated trades.jsonl matches event log; tape_present,True,True,True,False,True
+2026-04-28,burst_promotion_tape,"post_exit_observation, edge_1s3s, microburst_gate, promotion_3s, full_option_tape",44,dated trades.jsonl matches event log; tape_present,True,True,True,False,True
+2026-04-29,burst_promotion_tape,"post_exit_observation, edge_1s3s, microburst_gate, promotion_3s, full_option_tape",39,dated trades.jsonl matches event log; tape_present,True,True,True,False,True

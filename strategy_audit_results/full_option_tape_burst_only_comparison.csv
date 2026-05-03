@@ -1,0 +1,7 @@
+date,policy,trades,gross_pnl,net_pnl,target_hits,hard_stops,early_fail_1s,early_fail_3s,raw_burst_opportunities,matched_actual_entries,notes
+2026-04-28,actual_system,44,-9049.999999999869,-9049.999999999869,16,4,14,10,27128,4,actual candle-gated live trades
+2026-04-28,pure_burst_only_sim,1252,-214355.0000000003,-214355.0000000003,64,12,931,243,27128,0,1-position-at-a-time second-level replay
+2026-04-29,actual_system,39,-26199.999999999905,-26199.999999999905,11,7,13,8,29283,4,actual candle-gated live trades
+2026-04-29,pure_burst_only_sim,1198,-98788.00000000036,-98788.00000000036,76,5,825,289,29283,0,1-position-at-a-time second-level replay
+OVERALL,actual_system,83,-35249.999999999774,-35249.999999999774,27,11,27,18,56411,8,aggregate over last 2 tape days
+OVERALL,pure_burst_only_sim,2450,-313143.00000000064,-313143.00000000064,140,17,1756,532,56411,0,aggregate over last 2 tape days
