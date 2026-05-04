@@ -65,6 +65,7 @@ class StrategyEngine:
         self.market_data = MarketDataService(self.broker)
         kite_for_instruments = KiteConnect(api_key=settings.kite_api_key)
         kite_for_instruments.set_access_token(settings.kite_access_token)
+        # Refresh stale instruments once at startup, then keep the dataframe in memory.
         instruments = InstrumentService(
             kite=kite_for_instruments,
             cache_path=settings.instruments_cache_path,
@@ -210,6 +211,47 @@ class StrategyEngine:
                 "spread": option_quote.get("spread"),
                 "quantity": quantity,
                 "target_points": target_points,
+            },
+        )
+
+    def _log_option_expiry_selection_diagnostic(
+        self,
+        *,
+        trade_id: str,
+        signal: Signal,
+        spot: float,
+        tick_time: datetime,
+        choice: Any,
+    ) -> None:
+        if not (self.settings.enable_entry_context_logging or self.settings.enable_signal_logging):
+            return
+        computed_strike = self.selector.computed_strike_for(spot=spot, side=signal.side)
+        cache_mtime = None
+        try:
+            if self.settings.instruments_cache_path.exists():
+                cache_mtime = datetime.fromtimestamp(
+                    self.settings.instruments_cache_path.stat().st_mtime
+                ).isoformat()
+        except OSError:
+            cache_mtime = None
+        self._append_event(
+            "OPTION_EXPIRY_SELECTION_DIAGNOSTIC",
+            {
+                "trade_id": trade_id,
+                "spot": float(spot),
+                "side": signal.side.value,
+                "computed_strike": computed_strike,
+                "selected_tradingsymbol": choice.tradingsymbol,
+                "selected_expiry": choice.expiry.isoformat(),
+                "selected_strike": choice.strike,
+                "option_type": choice.option_type,
+                "eligible_expiries": self.selector.eligible_expiries_for(
+                    spot=spot,
+                    side=signal.side,
+                    now=tick_time,
+                ),
+                "instrument_cache_path": str(self.settings.instruments_cache_path),
+                "instrument_cache_mtime": cache_mtime,
             },
         )
 
@@ -2337,6 +2379,18 @@ class StrategyEngine:
                                 side=signal.side,
                                 now=tick_time,
                             )
+                            trade_id = self._build_trade_id(
+                                signal=signal,
+                                option_symbol=choice.full_symbol,
+                                signal_seen_time=tick_time,
+                            )
+                            self._log_option_expiry_selection_diagnostic(
+                                trade_id=trade_id,
+                                signal=signal,
+                                spot=spot_ltp,
+                                tick_time=tick_time,
+                                choice=choice,
+                            )
 
                             option_quote = self.market_data.option_quote(choice.full_symbol)
                             option_ltp = float(option_quote["ltp"])
@@ -2359,12 +2413,6 @@ class StrategyEngine:
                                 )
                                 self._sleep_with_control_poll(self.settings.poll_interval_seconds)
                                 continue
-
-                            trade_id = self._build_trade_id(
-                                signal=signal,
-                                option_symbol=choice.full_symbol,
-                                signal_seen_time=tick_time,
-                            )
 
                             target_points = self._get_target_points(entry_time=tick_time, fragile=False)
                             self._log_entry_context(

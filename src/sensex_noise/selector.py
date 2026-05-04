@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from datetime import datetime
 
 import pandas as pd
@@ -17,8 +18,11 @@ class InstrumentSelector:
     def round_to_100(value: float) -> int:
         return int(round(value / 100.0) * 100)
 
-    def pick_sensex_option(self, *, spot: float, side: SignalSide, now: datetime) -> InstrumentChoice:
-        strike = self.round_to_100(spot - 200) if side == SignalSide.CALL else self.round_to_100(spot + 200)
+    def computed_strike_for(self, *, spot: float, side: SignalSide) -> int:
+        return self.round_to_100(spot - 200) if side == SignalSide.CALL else self.round_to_100(spot + 200)
+
+    def _eligible_sensex_options(self, *, spot: float, side: SignalSide, now: datetime) -> pd.DataFrame:
+        strike = self.computed_strike_for(spot=spot, side=side)
         option_type = "CE" if side == SignalSide.CALL else "PE"
 
         df = self.instruments.copy()
@@ -34,6 +38,29 @@ class InstrumentSelector:
             & (df["expiry"].notna())
             & (df["expiry"] >= pd.Timestamp(now.date()))
         ].sort_values(["expiry", "tradingsymbol"])
+        return df
+
+    def eligible_expiries_for(self, *, spot: float, side: SignalSide, now: datetime) -> list[dict[str, Any]]:
+        eligible = self._eligible_sensex_options(spot=spot, side=side, now=now)
+        rows: list[dict[str, Any]] = []
+        for _, row in eligible.iterrows():
+            expiry = pd.Timestamp(row["expiry"]).date().isoformat() if pd.notna(row["expiry"]) else None
+            rows.append(
+                {
+                    "expiry": expiry,
+                    "tradingsymbol": str(row["tradingsymbol"]),
+                    "strike": int(float(row["strike"])),
+                    "instrument_type": str(row["instrument_type"]),
+                    "exchange": str(row["exchange"]),
+                    "segment": str(row["segment"]),
+                }
+            )
+        return rows
+
+    def pick_sensex_option(self, *, spot: float, side: SignalSide, now: datetime) -> InstrumentChoice:
+        strike = self.computed_strike_for(spot=spot, side=side)
+        option_type = "CE" if side == SignalSide.CALL else "PE"
+        df = self._eligible_sensex_options(spot=spot, side=side, now=now)
 
         if df.empty:
             raise ValueError(

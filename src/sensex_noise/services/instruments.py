@@ -34,6 +34,10 @@ class InstrumentService:
         the selector choose the monthly expiry simply because the current weekly
         expiry is absent from the stale cache. Therefore, the live path refreshes
         automatically when the cache is not from today.
+
+        This refresh happens once at process startup when the engine builds the
+        in-memory instrument universe. The trading path then reuses that in-memory
+        dataframe for selection and must not download instruments before each trade.
         """
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
 

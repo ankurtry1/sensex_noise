@@ -42,3 +42,101 @@ def test_pick_sensex_option() -> None:
     put_choice = selector.pick_sensex_option(spot=78143, side=SignalSide.PUT, now=datetime(2026, 3, 10, 10, 0))
     assert call_choice.strike == 77900
     assert put_choice.strike == 78300
+
+
+def test_pick_sensex_option_prefers_nearest_expiry_over_monthly() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "exchange": "BFO",
+                "tradingsymbol": "SENSEX26MAY0780700CE",
+                "name": "SENSEX",
+                "segment": "BFO-OPT",
+                "instrument_type": "CE",
+                "strike": 80700,
+                "expiry": "2026-05-07",
+                "lot_size": 20,
+            },
+            {
+                "exchange": "BFO",
+                "tradingsymbol": "SENSEX26MAY2880700CE",
+                "name": "SENSEX",
+                "segment": "BFO-OPT",
+                "instrument_type": "CE",
+                "strike": 80700,
+                "expiry": "2026-05-28",
+                "lot_size": 20,
+            },
+        ]
+    )
+    selector = InstrumentSelector(df)
+
+    choice = selector.pick_sensex_option(
+        spot=80900,
+        side=SignalSide.CALL,
+        now=datetime(2026, 5, 4, 10, 0),
+    )
+
+    assert choice.strike == 80700
+    assert choice.tradingsymbol == "SENSEX26MAY0780700CE"
+    assert choice.expiry.date().isoformat() == "2026-05-07"
+    assert selector.eligible_expiries_for(
+        spot=80900,
+        side=SignalSide.CALL,
+        now=datetime(2026, 5, 4, 10, 0),
+    ) == [
+        {
+            "expiry": "2026-05-07",
+            "tradingsymbol": "SENSEX26MAY0780700CE",
+            "strike": 80700,
+            "instrument_type": "CE",
+            "exchange": "BFO",
+            "segment": "BFO-OPT",
+        },
+        {
+            "expiry": "2026-05-28",
+            "tradingsymbol": "SENSEX26MAY2880700CE",
+            "strike": 80700,
+            "instrument_type": "CE",
+            "exchange": "BFO",
+            "segment": "BFO-OPT",
+        },
+    ]
+
+
+def test_pick_sensex_put_prefers_nearest_expiry_over_monthly() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "exchange": "BFO",
+                "tradingsymbol": "SENSEX26MAY0781100PE",
+                "name": "SENSEX",
+                "segment": "BFO-OPT",
+                "instrument_type": "PE",
+                "strike": 81100,
+                "expiry": "2026-05-07",
+                "lot_size": 20,
+            },
+            {
+                "exchange": "BFO",
+                "tradingsymbol": "SENSEX26MAY2881100PE",
+                "name": "SENSEX",
+                "segment": "BFO-OPT",
+                "instrument_type": "PE",
+                "strike": 81100,
+                "expiry": "2026-05-28",
+                "lot_size": 20,
+            },
+        ]
+    )
+    selector = InstrumentSelector(df)
+
+    choice = selector.pick_sensex_option(
+        spot=80900,
+        side=SignalSide.PUT,
+        now=datetime(2026, 5, 4, 10, 0),
+    )
+
+    assert choice.strike == 81100
+    assert choice.tradingsymbol == "SENSEX26MAY0781100PE"
+    assert choice.expiry.date().isoformat() == "2026-05-07"
