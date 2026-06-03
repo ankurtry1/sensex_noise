@@ -18,6 +18,8 @@ class Settings:
     logs_dir: Path
     runtime_dir: Path
     token_store_path: Path
+    app_base_url: str
+    admin_token: str
     poll_interval_seconds: int
     starting_capital: float
     trade_qty: int
@@ -397,6 +399,8 @@ def load_settings() -> Settings:
         logs_dir=logs_dir,
         runtime_dir=runtime_dir,
         token_store_path=token_store_path,
+        app_base_url=os.getenv("APP_BASE_URL", "http://127.0.0.1:8000").strip().rstrip("/"),
+        admin_token=os.getenv("ADMIN_TOKEN", "").strip(),
         poll_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "2")),
         starting_capital=float(os.getenv("STARTING_CAPITAL", "1000000")),
         trade_qty=int(os.getenv("TRADE_QTY", "500")),
