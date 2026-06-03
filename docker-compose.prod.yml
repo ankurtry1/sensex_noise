@@ -1,0 +1,12 @@
+services:
+  auth-web:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - /var/lib/sensex-noise:/var/lib/sensex-noise
+
+  market-worker:
+    restart: "no"
+    volumes:
+      - /var/lib/sensex-noise:/var/lib/sensex-noise
