@@ -18,5 +18,5 @@ venv/
 
 # Local runtime/output
 logs/
-runtime/
+/runtime/
 data/tape/

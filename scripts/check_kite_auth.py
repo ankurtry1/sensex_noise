@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Validate Kite API credentials from .env without printing secrets."""
+"""Validate Kite API credentials and today's stored access token."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
 from kiteconnect import KiteConnect
 from kiteconnect.exceptions import TokenException
 
-import os
+from sensex_noise.auth.token_store import TokenStore
+from sensex_noise.config import load_settings
 
 
 def _mask(value: str, keep: int) -> str:
@@ -20,39 +25,25 @@ def _mask(value: str, keep: int) -> str:
     return f"{clean[:keep]}..."
 
 
-def _required_env(name: str) -> str:
-    raw = os.getenv(name)
-    if raw is None:
-        raise ValueError(f"Missing required environment variable: {name}")
-    value = raw.strip()
-    if not value:
-        raise ValueError(f"Environment variable {name} is empty/whitespace")
-    return value
-
-
-def _load_env() -> Path:
-    repo_root = Path(__file__).resolve().parents[1]
-    env_path = repo_root / ".env"
-    load_dotenv(dotenv_path=env_path)
-    return env_path
-
-
 def main() -> int:
     try:
-        env_path = _load_env()
-        api_key = _required_env("KITE_API_KEY")
-        _required_env("KITE_API_SECRET")
-        access_token = _required_env("KITE_ACCESS_TOKEN")
+        settings = load_settings()
     except Exception as exc:
-        print(f"[FAIL] ENV loaded: {exc}")
+        print(f"[FAIL] Settings loaded: {exc}")
         return 1
 
-    print(f"[PASS] ENV loaded from: {env_path}")
-    print(f"  KITE_API_KEY={_mask(api_key, keep=4)}")
-    print(f"  KITE_ACCESS_TOKEN={_mask(access_token, keep=8)}")
+    token_record = TokenStore(settings.token_store_path).read_today()
+    if token_record is None:
+        print(f"[FAIL] No token for today in token store: {settings.token_store_path}")
+        return 2
 
-    kite = KiteConnect(api_key=api_key)
-    kite.set_access_token(access_token)
+    print("[PASS] Settings loaded")
+    print(f"  KITE_API_KEY={_mask(settings.kite_api_key, keep=4)}")
+    print(f"  token_store={settings.token_store_path}")
+    print(f"  trading_date={token_record.trading_date}")
+
+    kite = KiteConnect(api_key=settings.kite_api_key)
+    kite.set_access_token(token_record.access_token)
 
     try:
         profile = kite.profile()
@@ -60,26 +51,26 @@ def main() -> int:
         print(f"[PASS] profile() success: user_id={user_id}")
     except TokenException as exc:
         print(f"[FAIL] profile() TokenException: {exc}")
-        print("Likely causes: stale access token, api_key/access_token mismatch, or wrong .env file loaded.")
-        return 2
+        print("Likely causes: stale token, api_key/access_token mismatch, or wrong token store.")
+        return 3
     except Exception as exc:
         print(f"[FAIL] profile() failed: {exc}")
-        return 3
+        return 4
 
     try:
         ltp = kite.ltp(["BSE:SENSEX"])
         if "BSE:SENSEX" not in ltp:
             print("[FAIL] ltp() failed: BSE:SENSEX missing in response")
-            return 4
+            return 5
         last_price = ltp["BSE:SENSEX"].get("last_price")
         print(f"[PASS] ltp() success: BSE:SENSEX last_price={last_price}")
     except TokenException as exc:
         print(f"[FAIL] ltp() TokenException: {exc}")
-        print("Likely causes: stale access token, api_key/access_token mismatch, or wrong .env file loaded.")
-        return 5
+        print("Likely causes: stale token, api_key/access_token mismatch, or wrong token store.")
+        return 6
     except Exception as exc:
         print(f"[FAIL] ltp() failed: {exc}")
-        return 6
+        return 7
 
     print("[PASS] Kite auth checks completed successfully.")
     return 0

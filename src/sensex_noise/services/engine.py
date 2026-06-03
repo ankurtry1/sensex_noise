@@ -32,7 +32,7 @@ from sensex_noise.wallet import Wallet
 logger = logging.getLogger(__name__)
 AUTH_FAILURE_MSG = (
     "Authentication failed: Kite rejected api_key/access_token. Most likely causes: "
-    "expired access token, api_key from different app, or wrong .env file loaded. "
+    "expired access token, api_key from different app, or wrong token store loaded. "
     "Run: python scripts/check_kite_auth.py"
 )
 EXIT_REASON_PRECEDENCE = (
@@ -2280,6 +2280,12 @@ class StrategyEngine:
             self.settings.trade_qty,
             self.settings.use_kite_funds,
         )
+        if not self.settings.kite_access_token.strip():
+            logger.error(
+                "Missing Kite access token. Run scripts/run_market_day.py after daily Kite authentication "
+                "or provide a valid token for local development."
+            )
+            return
         if not self._startup_auth_check():
             return
 

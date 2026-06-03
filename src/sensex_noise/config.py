@@ -14,6 +14,10 @@ class Settings:
     kite_api_secret: str
     kite_access_token: str
     kite_request_token: str
+    data_dir: Path
+    logs_dir: Path
+    runtime_dir: Path
+    token_store_path: Path
     poll_interval_seconds: int
     starting_capital: float
     trade_qty: int
@@ -161,6 +165,20 @@ def _required(name: str) -> str:
 def _bool(name: str, default: str = "false") -> bool:
     raw = os.getenv(name, default).strip().lower()
     return raw in {"1", "true", "yes", "y", "on"}
+
+
+def _resolve_path(raw: str | Path, base_dir: Path) -> Path:
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    return base_dir / path
+
+
+def _path_env(name: str, default: str | Path, base_dir: Path) -> Path:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        raw = str(default)
+    return _resolve_path(raw, base_dir)
 
 
 def _int_list(name: str, default: str) -> tuple[int, ...]:
@@ -362,11 +380,23 @@ def _validate(settings: Settings) -> None:
 def load_settings() -> Settings:
     repo_root = Path(__file__).resolve().parents[2]
     load_dotenv(dotenv_path=repo_root / ".env")
+    data_dir = _path_env("DATA_DIR", repo_root, repo_root)
+    logs_dir = _path_env("LOGS_DIR", data_dir / "logs", data_dir)
+    runtime_dir = _path_env("RUNTIME_DIR", data_dir / "runtime", data_dir)
+    token_store_path = _path_env(
+        "TOKEN_STORE_PATH",
+        runtime_dir / "kite_access_token.json",
+        runtime_dir,
+    )
     settings = Settings(
         kite_api_key=_required("KITE_API_KEY"),
-        kite_api_secret=os.getenv("KITE_API_SECRET", "").strip(),
-        kite_access_token=_required("KITE_ACCESS_TOKEN"),
+        kite_api_secret=_required("KITE_API_SECRET"),
+        kite_access_token=os.getenv("KITE_ACCESS_TOKEN", "").strip(),
         kite_request_token=os.getenv("KITE_REQUEST_TOKEN", "").strip(),
+        data_dir=data_dir,
+        logs_dir=logs_dir,
+        runtime_dir=runtime_dir,
+        token_store_path=token_store_path,
         poll_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "2")),
         starting_capital=float(os.getenv("STARTING_CAPITAL", "1000000")),
         trade_qty=int(os.getenv("TRADE_QTY", "500")),
@@ -380,14 +410,16 @@ def load_settings() -> Settings:
         call_offset_points=int(os.getenv("CALL_OFFSET_POINTS", "-200")),
         put_offset_points=int(os.getenv("PUT_OFFSET_POINTS", "200")),
         underlying_symbol=os.getenv("UNDERLYING_SYMBOL", "BSE:SENSEX"),
-        instruments_cache_path=Path(os.getenv("INSTRUMENTS_CACHE_PATH", "data/instruments.csv")),
-        trade_log_path=Path(os.getenv("TRADE_LOG_PATH", "logs/trades.jsonl")),
-        event_log_path=Path(os.getenv("EVENT_LOG_PATH", "logs/events.jsonl")),
-        enriched_trade_log_path=Path(
-            os.getenv("ENRICHED_TRADE_LOG_PATH", "logs/trades_enriched.jsonl")
+        instruments_cache_path=_path_env("INSTRUMENTS_CACHE_PATH", data_dir / "data" / "instruments.csv", data_dir),
+        trade_log_path=_path_env("TRADE_LOG_PATH", logs_dir / "trades.jsonl", data_dir),
+        event_log_path=_path_env("EVENT_LOG_PATH", logs_dir / "events.jsonl", data_dir),
+        enriched_trade_log_path=_path_env(
+            "ENRICHED_TRADE_LOG_PATH",
+            logs_dir / "trades_enriched.jsonl",
+            data_dir,
         ),
-        features_output_path=Path(os.getenv("FEATURES_OUTPUT_PATH", "logs/features_daily.csv")),
-        control_path=Path(os.getenv("CONTROL_PATH", "runtime/control.json")),
+        features_output_path=_path_env("FEATURES_OUTPUT_PATH", logs_dir / "features_daily.csv", data_dir),
+        control_path=_path_env("CONTROL_PATH", runtime_dir / "control.json", data_dir),
         entry_cutoff_time=os.getenv("ENTRY_CUTOFF_TIME", "14:55"),
         entry_window_seconds=int(os.getenv("ENTRY_WINDOW_SECONDS", "40")),
         entry_window_max_seconds=float(os.getenv("ENTRY_WINDOW_MAX_SECONDS", "10.0")),
@@ -550,7 +582,11 @@ def load_settings() -> Settings:
         sensex_tape_rebase_on_atm_move_points=int(
             os.getenv("SENSEX_TAPE_REBASE_ON_ATM_MOVE_POINTS", "100")
         ),
-        sensex_tape_log_dir=Path(os.getenv("SENSEX_TAPE_LOG_DIR", "data/tape/sensex_options")),
+        sensex_tape_log_dir=_path_env(
+            "SENSEX_TAPE_LOG_DIR",
+            data_dir / "data" / "tape" / "sensex_options",
+            data_dir,
+        ),
         sensex_tape_write_legacy_options_log=_bool(
             "SENSEX_TAPE_WRITE_LEGACY_OPTIONS_LOG", "true"
         ),

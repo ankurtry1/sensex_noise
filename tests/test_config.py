@@ -5,7 +5,7 @@ from sensex_noise.config import load_settings
 
 _REQUIRED = {
     "KITE_API_KEY": "x",
-    "KITE_ACCESS_TOKEN": "y",
+    "KITE_API_SECRET": "z",
 }
 
 
@@ -65,8 +65,33 @@ def test_sensex_tape_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.sensex_tape_include_ce is True
     assert settings.sensex_tape_include_pe is True
     assert settings.sensex_tape_rebase_on_atm_move_points == 100
-    assert str(settings.sensex_tape_log_dir) == "data/tape/sensex_options"
+    assert settings.sensex_tape_log_dir.name == "sensex_options"
     assert settings.sensex_tape_write_legacy_options_log is True
+
+
+def test_access_token_is_optional_at_settings_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed_required(monkeypatch)
+    monkeypatch.setenv("KITE_ACCESS_TOKEN", "")
+
+    settings = load_settings()
+
+    assert settings.kite_access_token == ""
+
+
+def test_data_dir_rebases_runtime_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _seed_required(monkeypatch)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    settings = load_settings()
+
+    assert settings.data_dir == tmp_path
+    assert settings.logs_dir == tmp_path / "logs"
+    assert settings.runtime_dir == tmp_path / "runtime"
+    assert settings.token_store_path == tmp_path / "runtime" / "kite_access_token.json"
+    assert settings.instruments_cache_path == tmp_path / "data" / "instruments.csv"
+    assert settings.trade_log_path == tmp_path / "logs" / "trades.jsonl"
+    assert settings.control_path == tmp_path / "runtime" / "control.json"
+    assert settings.sensex_tape_log_dir == tmp_path / "data" / "tape" / "sensex_options"
 
 
 def test_invalid_sensex_tape_expiry_mode_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
