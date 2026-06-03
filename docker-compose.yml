@@ -1,0 +1,39 @@
+services:
+  auth-web:
+    build:
+      context: .
+    command: python -m uvicorn sensex_noise.web.app:app --host 0.0.0.0 --port 8000
+    env_file:
+      - .env
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      KITE_ACCESS_TOKEN: ""
+      DATA_DIR: /var/lib/sensex-noise
+      LOGS_DIR: /var/lib/sensex-noise/logs
+      RUNTIME_DIR: /var/lib/sensex-noise/runtime
+      TOKEN_STORE_PATH: /var/lib/sensex-noise/token-store/kite_access_token.json
+    ports:
+      - "8000:8000"
+    volumes:
+      - sensex-noise-data:/var/lib/sensex-noise
+
+  market-worker:
+    build:
+      context: .
+    command: python scripts/run_market_day.py
+    profiles:
+      - worker
+    env_file:
+      - .env
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      KITE_ACCESS_TOKEN: ""
+      DATA_DIR: /var/lib/sensex-noise
+      LOGS_DIR: /var/lib/sensex-noise/logs
+      RUNTIME_DIR: /var/lib/sensex-noise/runtime
+      TOKEN_STORE_PATH: /var/lib/sensex-noise/token-store/kite_access_token.json
+    volumes:
+      - sensex-noise-data:/var/lib/sensex-noise
+
+volumes:
+  sensex-noise-data:
