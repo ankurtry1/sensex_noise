@@ -12,6 +12,7 @@ venv/
 .env
 .env.*
 !.env.example
+*.pem
 
 # OS/editor
 .DS_Store
