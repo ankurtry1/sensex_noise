@@ -37,6 +37,15 @@ sudo apt-get upgrade -y
 
 ## 2. Install Docker and Compose Plugin
 
+Automated option:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ankurtry1/sensex_noise/main/deploy/scripts/bootstrap_ubuntu_docker.sh -o bootstrap_ubuntu_docker.sh
+sudo bash bootstrap_ubuntu_docker.sh https://github.com/ankurtry1/sensex_noise.git
+```
+
+Manual option:
+
 Install Docker from the official Docker apt repository:
 
 ```bash
@@ -132,6 +141,14 @@ Use that value for `ADMIN_TOKEN`.
 
 ## 6. Build Image
 
+Automated deploy option:
+
+```bash
+./deploy/scripts/deploy_auth_web.sh
+```
+
+Manual deploy steps are below.
+
 Use the production override:
 
 ```bash
@@ -195,6 +212,12 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=100 
 ## 11. Stop Auth Web
 
 ```bash
+./deploy/scripts/stop_auth_web.sh
+```
+
+Equivalent manual command:
+
+```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 ```
 
@@ -245,7 +268,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d auth-web
 
 ## 15. Later Nginx and HTTPS Plan
 
-This phase does not implement Nginx or HTTPS. Later, use this outline:
+This phase does not run Nginx or HTTPS setup automatically. Use this outline after `auth-web` works locally on the VM.
 
 1. Point `your-domain.example` DNS `A` record to the VM public IP.
 2. Install Nginx:
@@ -254,43 +277,98 @@ This phase does not implement Nginx or HTTPS. Later, use this outline:
    sudo apt-get install -y nginx
    ```
 
-3. Reverse proxy HTTPS traffic to the local auth web service:
+3. Copy the example config:
 
-   ```nginx
-   server {
-       server_name your-domain.example;
-
-       location / {
-           proxy_pass http://127.0.0.1:8000;
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-           proxy_set_header X-Forwarded-Proto $scheme;
-       }
-   }
+   ```bash
+   sudo cp deploy/nginx/sensex-noise.conf.example /etc/nginx/sites-available/sensex-noise
+   sudo nano /etc/nginx/sites-available/sensex-noise
    ```
 
-4. Install Certbot and issue a certificate:
+4. Replace `your-domain.example` with the real domain.
+
+5. Enable the site and test Nginx:
+
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/sensex-noise /etc/nginx/sites-enabled/sensex-noise
+   sudo nginx -t
+   sudo systemctl reload nginx
+   ```
+
+6. Install Certbot and issue a certificate:
 
    ```bash
    sudo apt-get install -y certbot python3-certbot-nginx
    sudo certbot --nginx -d your-domain.example
    ```
 
-5. Set `APP_BASE_URL=https://your-domain.example` in `.env`.
-6. Set Kite developer console redirect URL to:
+7. Set `APP_BASE_URL=https://your-domain.example` in `.env`.
+
+8. Set Kite developer console redirect URL to:
 
    ```text
    https://your-domain.example/kite/callback
    ```
 
-7. Restart auth web:
+9. Restart auth web:
 
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d auth-web
    ```
 
-## 16. Files That Must Stay Out of Git
+10. Test externally:
+
+    ```bash
+    curl https://your-domain.example/health
+    ```
+
+## 16. Data Backup and Retention Scripts
+
+Create a lightweight backup, excluding `.env`, token-store files, and large tick/tape data by default:
+
+```bash
+sudo ./deploy/scripts/backup_data.sh
+```
+
+Include large tick/tape data only when explicitly intended:
+
+```bash
+sudo INCLUDE_TICK_DATA=true ./deploy/scripts/backup_data.sh
+```
+
+Preview retention cleanup for old logs/tape data:
+
+```bash
+sudo ./deploy/scripts/cleanup_old_logs.sh
+```
+
+Delete files older than the retention window only after reviewing dry-run output:
+
+```bash
+sudo RETENTION_DAYS=30 DRY_RUN=false ./deploy/scripts/cleanup_old_logs.sh
+```
+
+The cleanup script skips paths containing today's `YYYY-MM-DD` date string.
+
+## 17. Security Cleanup Note
+
+See `deploy/SECURITY_CLEANUP.md` for the current plan to sanitize historical `request_token`-like strings found in `analysis/terminal_log_extracted.csv`.
+
+Do not rewrite Git history unless long-lived secrets were committed and credential rotation has already been completed.
+
+## 18. Future Scheduler Phase
+
+Do not auto-start `market-worker` yet.
+
+After cloud auth works reliably, a later phase should add:
+
+- a scheduled market-worker start around 09:05 IST,
+- a pre-start check that today's Kite token exists,
+- a stop or no-new-entry mechanism after market close,
+- log capture and alerting for auth failures, crashes, and stale streams.
+
+The worker remains manual until that scheduler phase is explicitly implemented.
+
+## 19. Files That Must Stay Out of Git
 
 Do not commit:
 
