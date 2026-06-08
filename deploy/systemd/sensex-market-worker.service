@@ -1,0 +1,20 @@
+[Unit]
+Description=Sensex Noise market-worker
+Documentation=file:/opt/sensex-noise/deploy/README.md
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=simple
+User=sensexbot
+WorkingDirectory=/opt/sensex-noise
+Environment=TZ=Asia/Kolkata
+ExecStart=/opt/sensex-noise/deploy/scripts/run_market_worker_once.sh
+ExecStop=/opt/sensex-noise/deploy/scripts/stop_market_worker.sh
+TimeoutStartSec=8h
+TimeoutStopSec=90
+KillMode=control-group
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

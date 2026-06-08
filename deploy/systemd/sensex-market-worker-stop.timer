@@ -1,0 +1,14 @@
+[Unit]
+Description=Stop Sensex Noise market-worker after market close
+Documentation=file:/opt/sensex-noise/deploy/README.md
+
+[Timer]
+# This timer assumes the VM timezone is Asia/Kolkata.
+OnCalendar=Mon..Fri *-*-* 15:35:00
+Unit=sensex-market-worker-stop.service
+AccuracySec=1min
+RandomizedDelaySec=0
+Persistent=false
+
+[Install]
+WantedBy=timers.target

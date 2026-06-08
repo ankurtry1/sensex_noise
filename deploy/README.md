@@ -127,6 +127,10 @@ DATA_DIR=/var/lib/sensex-noise
 LOGS_DIR=/var/lib/sensex-noise/logs
 RUNTIME_DIR=/var/lib/sensex-noise/runtime
 TOKEN_STORE_PATH=/var/lib/sensex-noise/token-store/kite_access_token.json
+NOTIFY_WEBHOOK_URL=
+NOTIFY_ON_START=true
+NOTIFY_ON_STOP=true
+NOTIFY_ON_FAILURE=true
 ```
 
 Do not add `KITE_ACCESS_TOKEN` to `.env`. Daily access tokens are written to `TOKEN_STORE_PATH` after manual Kite authentication.
@@ -247,7 +251,21 @@ The token file should remain on the server and must not be copied into Git.
 
 Do not run this until cloud auth is verified and market hours behavior is intended.
 
-Run the worker once manually:
+Preferred wrapper command:
+
+```bash
+./deploy/scripts/run_market_worker_once.sh
+```
+
+The wrapper checks that today's Kite token exists, prevents duplicate starts, writes a safe status file at:
+
+```text
+/var/lib/sensex-noise/runtime/worker_status.json
+```
+
+and then runs the existing Docker Compose worker profile. It does not change trading logic.
+
+Raw Docker Compose command, if needed:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile worker run --rm market-worker
@@ -255,7 +273,109 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile worker
 
 The worker reads today's token from `TOKEN_STORE_PATH`. If the token is missing or stale, it exits without starting the market runtime.
 
-## 14. Update Deployment
+Stop only the market worker:
+
+```bash
+./deploy/scripts/stop_market_worker.sh
+```
+
+Do not use `docker compose down` during market hours unless you also intend to stop auth-web.
+
+## 14. Worker Status Endpoints
+
+Admin endpoints are protected by `ADMIN_TOKEN` and do not expose secrets.
+
+Check overall admin status:
+
+```bash
+set -a
+. ./.env
+set +a
+curl -H "Authorization: Bearer $ADMIN_TOKEN" https://your-domain.example/admin/status
+```
+
+Check worker status only:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" https://your-domain.example/admin/worker/status
+```
+
+Check token readiness and worker summary:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" https://your-domain.example/admin/worker/check
+```
+
+Useful VM-side real-time checks:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f --tail=100 market-worker
+tail -f /var/lib/sensex-noise/logs/events.jsonl
+```
+
+## 15. Optional Systemd Market-Worker Timers
+
+Install timer units without enabling them:
+
+```bash
+sudo ./deploy/scripts/install_market_worker_timers.sh
+```
+
+The timers assume the VM timezone is `Asia/Kolkata`. To set it while installing:
+
+```bash
+sudo ./deploy/scripts/install_market_worker_timers.sh --set-timezone
+```
+
+After daily Kite authentication has been tested and you explicitly want automation, enable timers:
+
+```bash
+sudo ./deploy/scripts/install_market_worker_timers.sh --enable
+```
+
+Schedule:
+
+- `sensex-market-worker.timer`: starts the wrapper around 09:05 IST on weekdays.
+- `sensex-market-worker-stop.timer`: stops the worker at 15:35 IST on weekdays.
+
+Check timers:
+
+```bash
+systemctl list-timers --all 'sensex-market-worker*'
+systemctl status sensex-market-worker.timer --no-pager
+systemctl status sensex-market-worker-stop.timer --no-pager
+```
+
+The stop timer stops only `market-worker`; it does not stop auth-web.
+
+## 16. AWS Session Manager Access
+
+For network-agnostic VM shell access, use AWS Systems Manager Session Manager instead of SSH.
+
+Required AWS setup:
+
+1. Attach an EC2 IAM role to the instance.
+2. Attach only the AWS managed policy `AmazonSSMManagedInstanceCore`.
+3. Verify the SSM agent is installed and running:
+
+   ```bash
+   systemctl status snap.amazon-ssm-agent.amazon-ssm-agent.service --no-pager
+   systemctl status amazon-ssm-agent --no-pager
+   ```
+
+4. Verify the instance appears in Systems Manager managed nodes.
+5. Start a Session Manager shell from the AWS Console or CLI.
+
+CLI example:
+
+```bash
+aws ssm start-session --target i-06dc636818681767c --region ap-south-1
+```
+
+Do not close SSH until SSM access has been verified.
+
+## 17. Update Deployment
 
 Pull new code and rebuild:
 
@@ -266,7 +386,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d auth-web
 ```
 
-## 15. Later Nginx and HTTPS Plan
+## 18. Later Nginx and HTTPS Plan
 
 This phase does not run Nginx or HTTPS setup automatically. Use this outline after `auth-web` works locally on the VM.
 
@@ -321,7 +441,7 @@ This phase does not run Nginx or HTTPS setup automatically. Use this outline aft
     curl https://your-domain.example/health
     ```
 
-## 16. Data Backup and Retention Scripts
+## 19. Data Backup and Retention Scripts
 
 Create a lightweight backup, excluding `.env`, token-store files, and large tick/tape data by default:
 
@@ -349,26 +469,25 @@ sudo RETENTION_DAYS=30 DRY_RUN=false ./deploy/scripts/cleanup_old_logs.sh
 
 The cleanup script skips paths containing today's `YYYY-MM-DD` date string.
 
-## 17. Security Cleanup Note
+## 20. Security Cleanup Note
 
 See `deploy/SECURITY_CLEANUP.md` for the current plan to sanitize historical `request_token`-like strings found in `analysis/terminal_log_extracted.csv`.
 
 Do not rewrite Git history unless long-lived secrets were committed and credential rotation has already been completed.
 
-## 18. Future Scheduler Phase
+## 21. Future Hardening Phase
 
-Do not auto-start `market-worker` yet.
+Do not enable timers until daily cloud auth and one manual worker run have been verified.
 
-After cloud auth works reliably, a later phase should add:
+After the scheduled worker is verified, later hardening should add:
 
-- a scheduled market-worker start around 09:05 IST,
-- a pre-start check that today's Kite token exists,
-- a stop or no-new-entry mechanism after market close,
 - log capture and alerting for auth failures, crashes, and stale streams.
+- richer monitoring dashboards.
+- operational runbooks for token failures and exchange holidays.
 
-The worker remains manual until that scheduler phase is explicitly implemented.
+The worker remains opt-in until the timer units are explicitly enabled.
 
-## 19. Files That Must Stay Out of Git
+## 22. Files That Must Stay Out of Git
 
 Do not commit:
 

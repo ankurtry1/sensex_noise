@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from sensex_noise.auth.token_store import TokenStore
 from sensex_noise.config import Settings, load_settings
+from sensex_noise.ops.worker_status import build_worker_summary
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -52,10 +53,31 @@ def status_view(settings: Annotated[Settings, Depends(require_admin)]) -> dict[s
             "has_today_token": record is not None,
             "metadata": record.safe_metadata() if record is not None else None,
         },
+        "worker": build_worker_summary(settings),
         "paths": {
             "data_dir": str(settings.data_dir),
             "logs_dir": str(settings.logs_dir),
             "runtime_dir": str(settings.runtime_dir),
             "token_store_path": str(settings.token_store_path),
         },
+    }
+
+
+@router.get("/worker/status")
+def worker_status_view(settings: Annotated[Settings, Depends(require_admin)]) -> dict[str, object]:
+    return build_worker_summary(settings)
+
+
+@router.post("/worker/check")
+def worker_check_view(settings: Annotated[Settings, Depends(require_admin)]) -> dict[str, object]:
+    record = TokenStore(settings.token_store_path).read_today()
+    worker = build_worker_summary(settings)
+    worker_state = str(worker.get("worker_state") or "unknown")
+    return {
+        "token_store": {
+            "has_today_token": record is not None,
+            "metadata": record.safe_metadata() if record is not None else None,
+        },
+        "worker": worker,
+        "ready_to_start": record is not None and worker_state not in {"starting", "running", "stopping"},
     }

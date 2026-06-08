@@ -41,6 +41,8 @@ def test_admin_status_requires_admin_token(monkeypatch, tmp_path) -> None:
     payload = authorized.json()
     assert payload["token_store"]["has_today_token"] is False
     assert payload["token_store"]["metadata"] is None
+    assert payload["worker"]["worker_state"] == "unknown"
+    assert payload["worker"]["token_present"] is False
     assert payload["paths"]["data_dir"] == str(tmp_path)
     assert "test-api-secret" not in str(payload)
     assert "admin-secret" not in str(payload)
@@ -53,6 +55,41 @@ def test_admin_status_returns_503_when_admin_token_missing(monkeypatch, tmp_path
     response = TestClient(app).get("/admin/status")
 
     assert response.status_code == 503
+
+
+def test_admin_worker_status_is_protected_and_secret_free(monkeypatch, tmp_path) -> None:
+    _seed_web_env(monkeypatch, tmp_path)
+    worker_status_path = tmp_path / "runtime" / "worker_status.json"
+    worker_status_path.parent.mkdir(parents=True)
+    worker_status_path.write_text(
+        '{"worker_state": "running", "pid": 321, "token_present": true, "trading_date": "2026-06-08"}',
+        encoding="utf-8",
+    )
+    client = TestClient(app)
+
+    unauthorized = client.get("/admin/worker/status")
+    response = client.get("/admin/worker/status", headers={"X-Admin-Token": "admin-secret"})
+
+    assert unauthorized.status_code == 401
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["worker_state"] == "running"
+    assert payload["pid"] == 321
+    assert payload["token_present"] is False
+    assert "test-api-secret" not in str(payload)
+    assert "admin-secret" not in str(payload)
+
+
+def test_admin_worker_check_reports_readiness(monkeypatch, tmp_path) -> None:
+    _seed_web_env(monkeypatch, tmp_path)
+    client = TestClient(app)
+
+    response = client.post("/admin/worker/check", headers={"Authorization": "Bearer admin-secret"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["token_store"]["has_today_token"] is False
+    assert payload["ready_to_start"] is False
 
 
 def test_kite_login_redirect_sets_signed_state(monkeypatch, tmp_path) -> None:
