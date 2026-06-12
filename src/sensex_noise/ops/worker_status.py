@@ -5,10 +5,14 @@ import json
 import os
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from sensex_noise.auth.token_store import TokenStore
-from sensex_noise.config import Settings
+
+
+class WorkerStatusSettings(Protocol):
+    runtime_dir: Path
+    token_store_path: Path
 
 
 VALID_WORKER_STATES = {
@@ -37,7 +41,7 @@ STATUS_KEYS = {
 }
 
 
-def worker_status_path(settings: Settings) -> Path:
+def worker_status_path(settings: WorkerStatusSettings) -> Path:
     return settings.runtime_dir / "worker_status.json"
 
 
@@ -109,7 +113,7 @@ def write_worker_status(path: Path, updates: dict[str, Any]) -> dict[str, Any]:
     return status
 
 
-def build_worker_summary(settings: Settings) -> dict[str, Any]:
+def build_worker_summary(settings: WorkerStatusSettings) -> dict[str, Any]:
     status_path = worker_status_path(settings)
     status = read_worker_status(status_path)
     token_record = TokenStore(settings.token_store_path).read_today(today=date.today())

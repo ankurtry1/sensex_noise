@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 
 from sensex_noise.ops.worker_status import read_worker_status, write_worker_status
 
@@ -10,6 +12,32 @@ def test_missing_worker_status_returns_unknown(tmp_path) -> None:
 
     assert status["worker_state"] == "unknown"
     assert status["token_present"] is None
+
+
+def test_worker_status_import_does_not_require_dotenv() -> None:
+    script = """
+import importlib.abc
+import sys
+
+class BlockDotenv(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "dotenv" or fullname.startswith("dotenv."):
+            raise ModuleNotFoundError("blocked dotenv import")
+        return None
+
+sys.meta_path.insert(0, BlockDotenv())
+import sensex_noise.ops.worker_status
+print("ok")
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "ok"
 
 
 def test_write_worker_status_is_secret_free_and_atomic(tmp_path) -> None:
