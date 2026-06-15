@@ -1,5 +1,6 @@
 services:
   auth-web:
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
     restart: unless-stopped
     ports: !override
       - "127.0.0.1:8000:8000"
@@ -7,6 +8,7 @@ services:
       - /var/lib/sensex-noise:/var/lib/sensex-noise
 
   market-worker:
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
     restart: "no"
     volumes:
       - /var/lib/sensex-noise:/var/lib/sensex-noise

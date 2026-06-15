@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from fastapi.testclient import TestClient
 
 from sensex_noise.auth.kite_auth import KiteSession
@@ -90,6 +93,59 @@ def test_admin_worker_check_reports_readiness(monkeypatch, tmp_path) -> None:
     payload = response.json()
     assert payload["token_store"]["has_today_token"] is False
     assert payload["ready_to_start"] is False
+
+
+def test_admin_ui_serves_control_page(monkeypatch, tmp_path) -> None:
+    _seed_web_env(monkeypatch, tmp_path)
+
+    response = TestClient(app).get("/admin/ui")
+
+    assert response.status_code == 200
+    assert "Sensex Noise Admin" in response.text
+    assert "Start Worker" in response.text
+    assert "Stop Worker" in response.text
+    assert "admin-secret" not in response.text
+
+
+def test_admin_worker_start_stop_queue_command_files(monkeypatch, tmp_path) -> None:
+    _seed_web_env(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer admin-secret"}
+
+    start = client.post("/admin/worker/start", headers=headers)
+    stop = client.post("/admin/worker/stop", headers=headers)
+
+    assert start.status_code == 200
+    assert stop.status_code == 200
+    assert start.json()["status"] == "queued"
+    assert stop.json()["status"] == "queued"
+    assert (tmp_path / "runtime" / "commands" / "start.request").exists()
+    assert (tmp_path / "runtime" / "commands" / "stop.request").exists()
+    assert "admin-secret" not in start.text
+    assert "admin-secret" not in stop.text
+
+
+def test_admin_results_summarizes_tick_and_trade_files(monkeypatch, tmp_path) -> None:
+    _seed_web_env(monkeypatch, tmp_path)
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    tick_dir = tmp_path / "logs" / "ticks" / today
+    trade_tick_dir = tmp_path / "logs" / "trade_ticks" / today
+    tick_dir.mkdir(parents=True)
+    trade_tick_dir.mkdir(parents=True)
+    (tick_dir / "index.jsonl").write_text('{"a": 1}\n{"a": 2}\n', encoding="utf-8")
+    (trade_tick_dir / "trade-1.jsonl").write_text('{"b": 1}\n', encoding="utf-8")
+    (tmp_path / "logs").mkdir(exist_ok=True)
+    (tmp_path / "logs" / "trades.jsonl").write_text('{"trade": 1}\n', encoding="utf-8")
+    client = TestClient(app)
+
+    response = client.get("/admin/results", headers={"Authorization": "Bearer admin-secret"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["trading_date"] == today
+    assert payload["market_ticks"]["total_line_count"] == 2
+    assert payload["trade_ticks"]["total_line_count"] == 1
+    assert payload["journals"]["trades"]["line_count"] == 1
 
 
 def test_kite_login_redirect_sets_signed_state(monkeypatch, tmp_path) -> None:

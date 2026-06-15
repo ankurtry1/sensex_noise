@@ -5,6 +5,7 @@ set -euo pipefail
 # Timers are only enabled when --enable is supplied.
 
 ENABLE_TIMERS=false
+ENABLE_CONTROLS=false
 SET_TIMEZONE=false
 
 for arg in "$@"; do
@@ -12,12 +13,15 @@ for arg in "$@"; do
     --enable)
       ENABLE_TIMERS=true
       ;;
+    --enable-controls)
+      ENABLE_CONTROLS=true
+      ;;
     --set-timezone)
       SET_TIMEZONE=true
       ;;
     *)
       echo "Unknown argument: ${arg}" >&2
-      echo "Usage: $0 [--enable] [--set-timezone]" >&2
+      echo "Usage: $0 [--enable] [--enable-controls] [--set-timezone]" >&2
       exit 2
       ;;
   esac
@@ -42,6 +46,8 @@ sudo install -m 0644 deploy/systemd/sensex-market-worker.service /etc/systemd/sy
 sudo install -m 0644 deploy/systemd/sensex-market-worker.timer /etc/systemd/system/sensex-market-worker.timer
 sudo install -m 0644 deploy/systemd/sensex-market-worker-stop.service /etc/systemd/system/sensex-market-worker-stop.service
 sudo install -m 0644 deploy/systemd/sensex-market-worker-stop.timer /etc/systemd/system/sensex-market-worker-stop.timer
+sudo install -m 0644 deploy/systemd/sensex-worker-command.service /etc/systemd/system/sensex-worker-command.service
+sudo install -m 0644 deploy/systemd/sensex-worker-command.path /etc/systemd/system/sensex-worker-command.path
 
 sudo systemctl daemon-reload
 
@@ -52,4 +58,12 @@ else
   echo "Market-worker timers installed but not enabled. Re-run with --enable to enable them."
 fi
 
+if [[ "${ENABLE_CONTROLS}" == "true" ]]; then
+  sudo systemctl enable --now sensex-worker-command.path
+  echo "Worker command path enabled."
+else
+  echo "Worker command path installed but not enabled. Re-run with --enable-controls to enable GUI start/stop."
+fi
+
 systemctl list-timers --all --no-pager 'sensex-market-worker*'
+systemctl status sensex-worker-command.path --no-pager || true

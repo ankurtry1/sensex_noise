@@ -123,6 +123,8 @@ KITE_API_KEY=
 KITE_API_SECRET=
 ADMIN_TOKEN=
 APP_BASE_URL=https://your-domain.example
+APP_UID=
+APP_GID=
 DATA_DIR=/var/lib/sensex-noise
 LOGS_DIR=/var/lib/sensex-noise/logs
 RUNTIME_DIR=/var/lib/sensex-noise/runtime
@@ -142,6 +144,21 @@ openssl rand -hex 32
 ```
 
 Use that value for `ADMIN_TOKEN`.
+
+Set `APP_UID` and `APP_GID` to the VM app user's numeric UID/GID:
+
+```bash
+id -u sensexbot
+id -g sensexbot
+```
+
+Production Docker services use these values so files created under `/var/lib/sensex-noise` are owned by `sensexbot`, not container root.
+
+Normalize existing data ownership once:
+
+```bash
+sudo ./deploy/scripts/fix_data_permissions.sh
+```
 
 ## 6. Build Image
 
@@ -285,6 +302,14 @@ Do not use `docker compose down` during market hours unless you also intend to s
 
 Admin endpoints are protected by `ADMIN_TOKEN` and do not expose secrets.
 
+Open the browser admin UI:
+
+```text
+https://your-domain.example/admin/ui
+```
+
+The page asks for `ADMIN_TOKEN` locally in your browser and uses it only as an API header. It can refresh token/worker status, show a simple results summary, and queue start/stop requests. GUI start/stop requires the `sensex-worker-command.path` unit to be enabled on the VM.
+
 Check overall admin status:
 
 ```bash
@@ -306,6 +331,24 @@ Check token readiness and worker summary:
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" https://your-domain.example/admin/worker/check
 ```
 
+Queue worker start from an API client:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" https://your-domain.example/admin/worker/start
+```
+
+Queue worker stop from an API client:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" https://your-domain.example/admin/worker/stop
+```
+
+Check captured ticks/trades/results summary:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" https://your-domain.example/admin/results
+```
+
 Useful VM-side real-time checks:
 
 ```bash
@@ -314,7 +357,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f --tail=1
 tail -f /var/lib/sensex-noise/logs/events.jsonl
 ```
 
-## 15. Optional Systemd Market-Worker Timers
+## 15. Systemd Market-Worker Timers And GUI Controls
 
 Install timer units without enabling them:
 
@@ -334,10 +377,23 @@ After daily Kite authentication has been tested and you explicitly want automati
 sudo ./deploy/scripts/install_market_worker_timers.sh --enable
 ```
 
+Enable GUI/API start-stop dispatching:
+
+```bash
+sudo ./deploy/scripts/install_market_worker_timers.sh --enable-controls
+```
+
+Enable both automated schedule and GUI/API controls:
+
+```bash
+sudo ./deploy/scripts/install_market_worker_timers.sh --set-timezone --enable --enable-controls
+```
+
 Schedule:
 
-- `sensex-market-worker.timer`: starts the wrapper around 09:05 IST on weekdays.
+- `sensex-market-worker.timer`: starts the wrapper at 09:14 IST on weekdays.
 - `sensex-market-worker-stop.timer`: stops the worker at 15:35 IST on weekdays.
+- `sensex-worker-command.path`: watches `/var/lib/sensex-noise/runtime/commands/*.request` for admin UI/API start-stop requests.
 
 Check timers:
 
@@ -345,6 +401,7 @@ Check timers:
 systemctl list-timers --all 'sensex-market-worker*'
 systemctl status sensex-market-worker.timer --no-pager
 systemctl status sensex-market-worker-stop.timer --no-pager
+systemctl status sensex-worker-command.path --no-pager
 ```
 
 The stop timer stops only `market-worker`; it does not stop auth-web.

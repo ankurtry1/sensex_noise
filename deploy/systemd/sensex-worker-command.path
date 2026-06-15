@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch Sensex Noise worker command requests
+Documentation=file:/opt/sensex-noise/deploy/README.md
+
+[Path]
+PathExistsGlob=/var/lib/sensex-noise/runtime/commands/*.request
+Unit=sensex-worker-command.service
+
+[Install]
+WantedBy=multi-user.target
