@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 
 from sensex_noise.auth.kite_auth import KiteSession
 from sensex_noise.auth.token_store import TokenStore
+from sensex_noise.config import load_settings
+from sensex_noise.web.admin_session import ADMIN_SESSION_COOKIE, new_admin_session
 from sensex_noise.web import routes_kite
 from sensex_noise.web.app import app
 
@@ -49,6 +51,17 @@ def test_admin_status_requires_admin_token(monkeypatch, tmp_path) -> None:
     assert payload["paths"]["data_dir"] == str(tmp_path)
     assert "test-api-secret" not in str(payload)
     assert "admin-secret" not in str(payload)
+
+
+def test_admin_status_accepts_kite_login_session_cookie(monkeypatch, tmp_path) -> None:
+    _seed_web_env(monkeypatch, tmp_path)
+    client = TestClient(app)
+    client.cookies.set(ADMIN_SESSION_COOKIE, new_admin_session(load_settings()))
+
+    response = client.get("/admin/status")
+
+    assert response.status_code == 200
+    assert response.json()["token_store"]["has_today_token"] is False
 
 
 def test_admin_status_returns_503_when_admin_token_missing(monkeypatch, tmp_path) -> None:
@@ -104,6 +117,7 @@ def test_admin_ui_serves_control_page(monkeypatch, tmp_path) -> None:
     assert "Sensex Noise Admin" in response.text
     assert "Start Worker" in response.text
     assert "Stop Worker" in response.text
+    assert "Open Kite Login" in response.text
     assert "admin-secret" not in response.text
 
 
@@ -174,14 +188,17 @@ def test_kite_callback_stores_token_without_returning_secret(monkeypatch, tmp_pa
     login_response = client.get("/kite/login", follow_redirects=False)
     state = login_response.cookies["kite_auth_state"]
 
-    response = client.get(f"/kite/callback?request_token=request-token-1&state={state}")
+    response = client.get(f"/kite/callback?request_token=request-token-1&state={state}", follow_redirects=False)
 
-    assert response.status_code == 200
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/ui?kite=ok"
     assert "stored-secret-token" not in response.text
-    payload = response.json()
-    assert payload["token_store"]["metadata"]["user_id"] == "USER123"
-    assert payload["token_store"]["metadata"]["has_access_token"] is True
+    assert ADMIN_SESSION_COOKIE in response.cookies
     assert TokenStore(tmp_path / "runtime" / "kite_access_token.json").read_today().access_token == "stored-secret-token"
+
+    admin_response = client.get("/admin/status")
+    assert admin_response.status_code == 200
+    assert admin_response.json()["token_store"]["metadata"]["user_id"] == "USER123"
 
 
 def test_kite_callback_rejects_missing_state(monkeypatch, tmp_path) -> None:

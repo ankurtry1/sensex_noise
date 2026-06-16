@@ -300,7 +300,7 @@ Do not use `docker compose down` during market hours unless you also intend to s
 
 ## 14. Worker Status Endpoints
 
-Admin endpoints are protected by `ADMIN_TOKEN` and do not expose secrets.
+Admin endpoints are protected and do not expose secrets. A successful Kite login creates a signed browser session cookie for the admin UI, so normal daily operation does not require copying `ADMIN_TOKEN` from the VM.
 
 Open the browser admin UI:
 
@@ -308,7 +308,17 @@ Open the browser admin UI:
 https://your-domain.example/admin/ui
 ```
 
-The page asks for `ADMIN_TOKEN` locally in your browser and uses it only as an API header. It can refresh token/worker status, show a simple results summary, and queue start/stop requests. GUI start/stop requires the `sensex-worker-command.path` unit to be enabled on the VM.
+Daily browser workflow:
+
+1. Open `https://your-domain.example/kite/login`.
+2. Complete Kite login.
+3. The callback stores today's Kite access token and redirects to `/admin/ui`.
+4. Click **Refresh** to check token/worker/results status.
+5. Click **Start Worker** or **Stop Worker** if manual control is needed.
+
+The admin token field on `/admin/ui` is only a fallback for maintenance. GUI start/stop requires the `sensex-worker-command.path` unit to be enabled on the VM.
+
+For terminal/API maintenance, use `ADMIN_TOKEN` as a bearer token.
 
 Check overall admin status:
 

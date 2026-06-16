@@ -8,12 +8,17 @@ import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from kiteconnect.exceptions import KiteException
 
 from sensex_noise.auth.kite_auth import build_login_url, exchange_request_token
 from sensex_noise.auth.token_store import TokenStore
 from sensex_noise.config import Settings, load_settings
+from sensex_noise.web.admin_session import (
+    ADMIN_SESSION_COOKIE,
+    ADMIN_SESSION_MAX_AGE_SECONDS,
+    new_admin_session,
+)
 
 
 router = APIRouter(prefix="/kite", tags=["kite"])
@@ -95,7 +100,7 @@ def kite_callback(
     state: str | None = None,
     kite_auth_state: str | None = Cookie(default=None, alias=_STATE_COOKIE),
     settings: Settings = Depends(get_settings),
-) -> JSONResponse:
+) -> RedirectResponse:
     if kite_auth_state is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Kite auth state")
     if state is not None and not secrets.compare_digest(state, kite_auth_state):
@@ -112,19 +117,19 @@ def kite_callback(
     except (KiteException, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kite token exchange failed") from exc
 
-    record = TokenStore(settings.token_store_path).save(
+    TokenStore(settings.token_store_path).save(
         access_token=session.access_token,
         api_key=settings.kite_api_key,
         user_id=session.user_id,
     )
-    response = JSONResponse(
-        {
-            "status": "ok",
-            "token_store": {
-                "has_today_token": True,
-                "metadata": record.safe_metadata(),
-            },
-        }
+    response = RedirectResponse("/admin/ui?kite=ok", status_code=status.HTTP_303_SEE_OTHER)
+    response.set_cookie(
+        ADMIN_SESSION_COOKIE,
+        new_admin_session(settings),
+        max_age=ADMIN_SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=settings.app_base_url.startswith("https://"),
+        samesite="lax",
     )
     response.delete_cookie(
         _STATE_COOKIE,

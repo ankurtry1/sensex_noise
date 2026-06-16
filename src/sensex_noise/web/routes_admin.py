@@ -4,13 +4,14 @@ import secrets
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, status
 from fastapi.responses import HTMLResponse
 
 from sensex_noise.auth.token_store import TokenStore
 from sensex_noise.config import Settings, load_settings
 from sensex_noise.ops.results import build_results_summary
 from sensex_noise.ops.worker_status import build_worker_summary
+from sensex_noise.web.admin_session import ADMIN_SESSION_COOKIE, valid_admin_session
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -32,6 +33,8 @@ _ADMIN_UI = """<!doctype html>
     button { border: 1px solid #1f5eff; background: #1f5eff; color: white; border-radius: 6px; padding: 9px 12px; margin: 8px 8px 0 0; cursor: pointer; }
     button.secondary { background: #fff; color: #1f5eff; }
     button.danger { border-color: #b42318; background: #b42318; }
+    .hint { color: #586174; margin: 8px 0 0; line-height: 1.4; }
+    .alert { border: 1px solid #f1c27d; background: #fff8eb; color: #583a00; border-radius: 6px; padding: 10px; margin-top: 12px; }
     pre { background: #101418; color: #e6edf3; padding: 12px; border-radius: 6px; overflow: auto; max-height: 420px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
     .metric { border: 1px solid #e1e5ec; border-radius: 6px; padding: 12px; }
@@ -40,6 +43,8 @@ _ADMIN_UI = """<!doctype html>
       body { background: #0f1216; color: #e6edf3; }
       section { background: #171b21; border-color: #2b313b; }
       input, button.secondary { background: #0f1216; color: #e6edf3; border-color: #454d5a; }
+      .hint { color: #aab3c2; }
+      .alert { background: #2a2112; border-color: #6f521e; color: #f7d99b; }
       .metric { border-color: #2b313b; }
       .metric b { color: #aab3c2; }
     }
@@ -49,14 +54,17 @@ _ADMIN_UI = """<!doctype html>
 <main>
   <h1>Sensex Noise Admin</h1>
   <section>
-    <label for="token">Admin Token</label>
-    <input id="token" type="password" autocomplete="current-password" placeholder="Paste ADMIN_TOKEN">
+    <p class="hint">After Kite login, this page works automatically in the same browser. The admin token field is only a fallback for maintenance.</p>
+    <label for="token">Admin Token Fallback</label>
+    <input id="token" type="password" autocomplete="current-password" placeholder="Optional">
     <div>
       <button class="secondary" onclick="saveToken()">Save Token Locally</button>
+      <button class="secondary" onclick="window.location.href='/kite/login'">Open Kite Login</button>
       <button class="secondary" onclick="refreshAll()">Refresh</button>
       <button onclick="sendCommand('start')">Start Worker</button>
       <button class="danger" onclick="sendCommand('stop')">Stop Worker</button>
     </div>
+    <div id="notice" class="alert" style="display:none"></div>
   </section>
   <section>
     <h2>Status</h2>
@@ -80,8 +88,9 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c]));
 }
 async function api(path, options = {}) {
-  const headers = Object.assign({}, options.headers || {}, {Authorization: `Bearer ${token()}`});
-  const res = await fetch(path, Object.assign({}, options, {headers}));
+  const headers = Object.assign({}, options.headers || {});
+  if (token()) headers.Authorization = `Bearer ${token()}`;
+  const res = await fetch(path, Object.assign({}, options, {headers, credentials: "same-origin"}));
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); } catch { data = {raw: text}; }
@@ -91,8 +100,19 @@ async function api(path, options = {}) {
 function metric(label, value) {
   return `<div class="metric"><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span></div>`;
 }
+function notice(message) {
+  const box = document.getElementById("notice");
+  if (!message) {
+    box.style.display = "none";
+    box.textContent = "";
+    return;
+  }
+  box.textContent = message;
+  box.style.display = "block";
+}
 async function refreshAll() {
   try {
+    notice("");
     const status = await api("/admin/status");
     const results = await api("/admin/results");
     const worker = status.worker || {};
@@ -110,15 +130,22 @@ async function refreshAll() {
     document.getElementById("results").textContent = JSON.stringify(results, null, 2);
   } catch (err) {
     document.getElementById("raw").textContent = String(err);
+    if (String(err).includes("401")) {
+      notice("Session not active. Open Kite Login first, complete login, then return here. You can also paste ADMIN_TOKEN as a fallback.");
+    }
   }
 }
 async function sendCommand(command) {
   try {
+    notice("");
     const data = await api(`/admin/worker/${command}`, {method: "POST"});
     document.getElementById("raw").textContent = JSON.stringify(data, null, 2);
     setTimeout(refreshAll, 1500);
   } catch (err) {
     document.getElementById("raw").textContent = String(err);
+    if (String(err).includes("401")) {
+      notice("Session not active. Complete Kite Login first, then click Start Worker.");
+    }
   }
 }
 refreshAll();
@@ -136,6 +163,7 @@ def require_admin(
     settings: Annotated[Settings, Depends(get_settings)],
     authorization: Annotated[str | None, Header()] = None,
     x_admin_token: Annotated[str | None, Header()] = None,
+    admin_session: Annotated[str | None, Cookie(alias=ADMIN_SESSION_COOKIE)] = None,
 ) -> Settings:
     expected = settings.admin_token.strip()
     if not expected:
@@ -143,6 +171,9 @@ def require_admin(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="ADMIN_TOKEN is not configured",
         )
+
+    if valid_admin_session(settings, admin_session):
+        return settings
 
     supplied = x_admin_token or ""
     if authorization:
