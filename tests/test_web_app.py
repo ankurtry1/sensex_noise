@@ -148,8 +148,12 @@ def test_admin_results_summarizes_tick_and_trade_files(monkeypatch, tmp_path) ->
     trade_tick_dir.mkdir(parents=True)
     (tick_dir / "index.jsonl").write_text('{"a": 1}\n{"a": 2}\n', encoding="utf-8")
     (trade_tick_dir / "trade-1.jsonl").write_text('{"b": 1}\n', encoding="utf-8")
-    (tmp_path / "logs").mkdir(exist_ok=True)
-    (tmp_path / "logs" / "trades.jsonl").write_text('{"trade": 1}\n', encoding="utf-8")
+    daily_trade_dir = tmp_path / "logs" / "trades"
+    daily_event_dir = tmp_path / "logs" / "events"
+    daily_trade_dir.mkdir(parents=True)
+    daily_event_dir.mkdir(parents=True)
+    (daily_trade_dir / f"{today}.trades.jsonl").write_text('{"trade": 1}\n', encoding="utf-8")
+    (daily_event_dir / f"{today}.events.jsonl").write_text('{"event": 1}\n{"event": 2}\n', encoding="utf-8")
     client = TestClient(app)
 
     response = client.get("/admin/results", headers={"Authorization": "Bearer admin-secret"})
@@ -160,6 +164,8 @@ def test_admin_results_summarizes_tick_and_trade_files(monkeypatch, tmp_path) ->
     assert payload["market_ticks"]["total_line_count"] == 2
     assert payload["trade_ticks"]["total_line_count"] == 1
     assert payload["journals"]["trades"]["line_count"] == 1
+    assert payload["journals"]["events"]["line_count"] == 2
+    assert payload["journals"]["trades"]["path"].endswith(f"logs/trades/{today}.trades.jsonl")
 
 
 def test_kite_login_redirect_sets_signed_state(monkeypatch, tmp_path) -> None:

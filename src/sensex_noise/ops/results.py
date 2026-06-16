@@ -65,11 +65,25 @@ def _summarize_tree(root: Path, *, limit: int = 50) -> dict[str, Any]:
     }
 
 
+def _journal_summary(configured_path: Path, daily_path: Path) -> dict[str, Any]:
+    if configured_path.exists():
+        summary = _file_summary(configured_path)
+        summary["configured_path"] = str(configured_path)
+        return summary
+
+    summary = _file_summary(daily_path)
+    summary["configured_path"] = str(configured_path)
+    return summary
+
+
 def build_results_summary(settings: ResultsSettings, trading_date: str | None = None) -> dict[str, Any]:
     day = trading_date or _today_ist()
     tick_root = settings.logs_dir / "ticks" / day
     trade_tick_root = settings.logs_dir / "trade_ticks" / day
     tape_root = settings.sensex_tape_log_dir / day
+    daily_trade_path = settings.logs_dir / "trades" / f"{day}.trades.jsonl"
+    daily_event_path = settings.logs_dir / "events" / f"{day}.events.jsonl"
+    daily_enriched_trade_path = settings.logs_dir / "trades" / f"{day}.trades_enriched.jsonl"
 
     return {
         "trading_date": day,
@@ -78,9 +92,9 @@ def build_results_summary(settings: ResultsSettings, trading_date: str | None = 
         "trade_ticks": _summarize_tree(trade_tick_root),
         "option_tape": _summarize_tree(tape_root),
         "journals": {
-            "trades": _file_summary(settings.trade_log_path),
-            "events": _file_summary(settings.event_log_path),
-            "trades_enriched": _file_summary(settings.enriched_trade_log_path),
+            "trades": _journal_summary(settings.trade_log_path, daily_trade_path),
+            "events": _journal_summary(settings.event_log_path, daily_event_path),
+            "trades_enriched": _journal_summary(settings.enriched_trade_log_path, daily_enriched_trade_path),
             "features_daily": _file_summary(settings.features_output_path),
         },
     }
