@@ -11,9 +11,17 @@ LOGS_DIR="${LOGS_DIR:-${DATA_DIR}/logs}"
 COMMAND_DIR="${WORKER_COMMAND_DIR:-${RUNTIME_DIR}/commands}"
 LOCK_PATH="${RUNTIME_DIR}/worker_command_dispatch.lock"
 TODAY="$(TZ=Asia/Kolkata date +%F)"
+COMMAND_LOG="${LOGS_DIR}/worker-command-${TODAY}.log"
 
 cd "${REPO_DIR}"
 mkdir -p "${COMMAND_DIR}" "${LOGS_DIR}" "${RUNTIME_DIR}"
+
+log_command() {
+  echo "$(date -Is) $*" >>"${COMMAND_LOG}"
+  if [[ "$(id -u)" -eq 0 ]] && id sensexbot >/dev/null 2>&1; then
+    chown sensexbot:sensexbot "${COMMAND_LOG}" || true
+  fi
+}
 
 exec 8>"${LOCK_PATH}"
 flock -n 8 || exit 0
@@ -32,15 +40,16 @@ if [[ -f "${COMMAND_DIR}/start.request" ]]; then
 fi
 
 if [[ "${run_stop}" == "true" ]]; then
-  ./deploy/scripts/stop_market_worker.sh >>"${LOGS_DIR}/worker-command-${TODAY}.log" 2>&1 || true
+  systemctl stop sensex-market-worker.service >>"${COMMAND_LOG}" 2>&1 || true
+  systemctl start sensex-market-worker-stop.service >>"${COMMAND_LOG}" 2>&1 || true
+  log_command "stop requested"
 fi
 
 if [[ "${run_start}" == "true" ]]; then
-  if docker ps --format '{{.Names}}' | grep -qx 'sensex-noise-market-worker'; then
-    echo "$(date -Is) start skipped: market worker already running" >>"${LOGS_DIR}/worker-command-${TODAY}.log"
+  if systemctl is-active --quiet sensex-market-worker.service || docker ps --format '{{.Names}}' | grep -qx 'sensex-noise-market-worker'; then
+    log_command "start skipped: market worker already running"
   else
-    nohup ./deploy/scripts/run_market_worker_once.sh \
-      >"${LOGS_DIR}/market-worker-wrapper-${TODAY}.log" 2>&1 &
-    echo "$(date -Is) start requested: pid=$!" >>"${LOGS_DIR}/worker-command-${TODAY}.log"
+    systemctl start sensex-market-worker.service >>"${COMMAND_LOG}" 2>&1
+    log_command "start requested via systemd"
   fi
 fi

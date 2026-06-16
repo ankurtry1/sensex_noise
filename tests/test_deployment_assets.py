@@ -26,11 +26,15 @@ def test_worker_command_dispatcher_assets_are_installed_by_timer_script() -> Non
     script = (ROOT / "deploy/scripts/install_market_worker_timers.sh").read_text(encoding="utf-8")
     service = (ROOT / "deploy/systemd/sensex-worker-command.service").read_text(encoding="utf-8")
     path_unit = (ROOT / "deploy/systemd/sensex-worker-command.path").read_text(encoding="utf-8")
+    dispatcher = (ROOT / "deploy/scripts/worker_command_dispatch.sh").read_text(encoding="utf-8")
 
     assert "sensex-worker-command.service" in script
     assert "sensex-worker-command.path" in script
     assert "--enable-controls" in script
     assert "worker_command_dispatch.sh" in service
+    assert "User=sensexbot" not in service
+    assert "systemctl start sensex-market-worker.service" in dispatcher
+    assert "nohup ./deploy/scripts/run_market_worker_once.sh" not in dispatcher
     assert "PathExistsGlob=/var/lib/sensex-noise/runtime/commands/*.request" in path_unit
 
 
